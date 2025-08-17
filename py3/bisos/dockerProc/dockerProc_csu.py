@@ -450,11 +450,11 @@ class cmndDevExamples(cs.Cmnd):
 
         return(cmndOutcome)
 
-####+BEGIN: b:py3:cs:cmnd/classHead :cmndName "vagrantCommonCmnds" :comment "" :parsMand "" :parsOpt "perfName" :argsMin 0 :argsMax 0 :pyInv ""
+####+BEGIN: b:py3:cs:cmnd/classHead :cmndName "dockerDirectCmnds" :comment "" :parsMand "" :parsOpt "perfName" :argsMin 0 :argsMax 0 :pyInv ""
 """ #+begin_org
-*  _[[elisp:(blee:menu-sel:outline:popupMenu)][±]]_ _[[elisp:(blee:menu-sel:navigation:popupMenu)][Ξ]]_ [[elisp:(outline-show-branches+toggle)][|=]] [[elisp:(bx:orgm:indirectBufOther)][|>]] *[[elisp:(blee:ppmm:org-mode-toggle)][|N]]*  CmndSvc-   [[elisp:(outline-show-subtree+toggle)][||]] <<vagrantCommonCmnds>>  =verify= parsOpt=perfName ro=cli   [[elisp:(org-cycle)][| ]]
+*  _[[elisp:(blee:menu-sel:outline:popupMenu)][±]]_ _[[elisp:(blee:menu-sel:navigation:popupMenu)][Ξ]]_ [[elisp:(outline-show-branches+toggle)][|=]] [[elisp:(bx:orgm:indirectBufOther)][|>]] *[[elisp:(blee:ppmm:org-mode-toggle)][|N]]*  CmndSvc-   [[elisp:(outline-show-subtree+toggle)][||]] <<dockerDirectCmnds>>  =verify= parsOpt=perfName ro=cli   [[elisp:(org-cycle)][| ]]
 #+end_org """
-class vagrantCommonCmnds(cs.Cmnd):
+class dockerDirectCmnds(cs.Cmnd):
     cmndParamsMandatory = [ ]
     cmndParamsOptional = [ 'perfName', ]
     cmndArgsLen = {'Min': 0, 'Max': 0,}
@@ -480,48 +480,56 @@ class vagrantCommonCmnds(cs.Cmnd):
         # cmnd = cs.examples.cmndEnter
         literal = cs.examples.execInsert
 
-        cs.examples.menuChapter('=Direct Interface Commands=')
+        cs.examples.menuChapter('=Direct Docker Interface Commands=')
 
-        cs.examples.menuSection('/Vagrant Base Boxes/')
+        cs.examples.menuSection('/Initializations and Setup/')
 
-        literal("ls -ld ~bystar/.vagrant.d/boxes")
-        literal("tree ~bystar/.vagrant.d/boxes")
-        literal("vagrant box list")
-        literal("vagrant box list -i")
-        literal("vagrant box --help")
-        literal("vagrant box add --provider libvirt peru/ubuntu-20.04-desktop-amd64")
-        literal("vagrant box add --provider libvirt generic/debian10")
-        literal("vagrant box remove boxName")
-        literal("vagrant box outdated   # Applies to current Vagrant directory")
-        literal("vagrant box outdated --global")
-        literal("vagrant box prune --provider libvirt peru/ubuntu-20.04-desktop-amd64")
-        
-        cs.examples.menuSection('/Vagrant Plugins/')
+        literal("NOTYET -- PKG sbom")
+        literal("sudo groupadd docker")
+        literal("sudo usermod -aG docker $USER")
 
-        literal("vagrant plugin list --local")
-        literal("vagrant plugin list")
-        literal("vagrant plugin update")
-        literal("vagrant plugin install vagrant-libvirt")
-        
-        cs.examples.menuSection('/Vagrant Status And Information/')
+        literal("https://hub.docker.com")
+        literal("docker search --help")
 
-        literal("vagrant --version")
-        literal("vagrant global-status")
-        literal("vagrant global-status --prune   # rechecks cache and prunes invalid entries")
-        literal("vagrant status 6cd2a10")
-        
-        cs.examples.menuSection('/Creation Of Current Vagrant Directory/')
+        cs.examples.menuSection('/BISOS Docker Base Dockerfiles/')
 
-        literal("vagrant init")
-        
-        cs.examples.menuSection('/Interact With Current Vagrant Directory/')
+        literal("ls -ld /bisos/git/bxRepos/bxObjects/bro_dockerfiles/debian")
+        literal("tree /bisos/git/bxRepos/bxObjects/bro_dockerfiles/debian/12")
 
-        literal("vagrant validate")
-        literal("vagrant status")
-        literal("vagrant up")
-        literal("vagrant provision")
-        literal("vagrant destroy  # as if you never created the guest machine in the first place")
-        literal("vagrant destroy --force  # No prompt")
+        cs.examples.menuSection('/Docker:: Inpsetc, Examine/')
+
+        literal("docker ps --help")
+
+        literal("docker log --help")
+        literal("docker log DockerID")
+
+        cs.examples.menuSection('/Docker Images/')
+
+        literal("docker image --help")
+        literal("docker image ls")
+        literal("docker build -t debian-gnome-desktop .")
+        literal("docker build --no-cache --progress=plain -t debian-12-novnc-gnome .")
+        literal("docker image prune -a -f # Remove all unused images (dangling and unreferenced)-- forced")
+        literal("docker images -f dangling=true -q # -q provides only image ids")
+        literal("docker rmi $(docker images -f dangling=true -q) # Remove dangling images")
+
+        cs.examples.menuSection('/Docker Run Interface -- Status And Information/')
+
+        literal("docker run -d -p 8080:6080 -p 5901:5901 --name my-gnome-desktop debian-gnome-novnc")
+
+        cs.examples.menuSection('/Doocker Compose Interface/')
+
+        literal("docker compose --help")
+
+
+        cs.examples.menuSection('/Docker:: Execute a command in a running container/')
+
+        literal("docker exec --help")
+
+        cs.examples.menuSection('/Docker Cleanups/')
+
+        literal("docker image prune -a -f # Remove all unused images (dangling and unreferenced)-- forced")
+        literal("docker system prune # DANGER:: Prune entire Docker system (containers, images, volumes, networks)")
 
         return(cmndOutcome)
 
