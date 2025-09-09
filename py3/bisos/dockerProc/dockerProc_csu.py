@@ -480,6 +480,16 @@ class dockerDirectCmnds(cs.Cmnd):
         # cmnd = cs.examples.cmndEnter
         literal = cs.examples.execInsert
 
+        if b.subProc.Op(outcome=cmndOutcome, log=0).bash(
+                f"""docker image ls -q | head -1""",
+        ).isProblematic():  return(b_io.eh.badOutcome(cmndOutcome))
+        oneImageId = cmndOutcome.stdout.strip()
+
+        if b.subProc.Op(outcome=cmndOutcome, log=0).bash(
+                f"""docker ps -q | head -1""",
+        ).isProblematic():  return(b_io.eh.badOutcome(cmndOutcome))
+        oneContainerId = cmndOutcome.stdout.strip()
+
         cs.examples.menuChapter('=Direct Docker Interface Commands=')
 
         cs.examples.menuSection('/Initializations and Setup/')
@@ -499,14 +509,17 @@ class dockerDirectCmnds(cs.Cmnd):
         cs.examples.menuSection('/Docker:: Inpsetc, Examine/')
 
         literal("docker ps --help")
+        literal("docker ps")
+        literal("docker ps -a")
 
-        literal("docker log --help")
-        literal("docker log DockerID")
+        literal("docker logs --help")
+        literal(f"docker logs {oneContainerId}")
 
         cs.examples.menuSection('/Docker Images/')
 
         literal("docker image --help")
         literal("docker image ls")
+        literal(f"docker image inspect {oneImageId}")
         literal("docker build -t debian-gnome-desktop .")
         literal("docker build --no-cache --progress=plain -t debian-12-novnc-gnome .")
         literal("docker image prune -a -f # Remove all unused images (dangling and unreferenced)-- forced")
@@ -520,6 +533,13 @@ class dockerDirectCmnds(cs.Cmnd):
         cs.examples.menuSection('/Doocker Compose Interface/')
 
         literal("docker compose --help")
+        literal("docker compose up -d  # Builds, (re)creates, starts, and attaches to containers for a service")
+        literal("docker compose start   # useful only to restart existing containers, never creates new containers")
+        literal("docker compose stop  # stop exisiting container")
+        literal("docker compose down  # stop exisiting container")
+        literal("docker compose config  # compile the yamel file")
+        literal("docker compose run  #  similar to docker run -ti -- opens interactive terminal, returns exit status")
+        literal("docker compose logs  #  or -f")
 
 
         cs.examples.menuSection('/Docker:: Execute a command in a running container/')
