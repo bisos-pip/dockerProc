@@ -1,7 +1,98 @@
 #!/usr/bin/env python
 
+""" #+begin_org
+* Panel::  [[file:/bisos/panels/bisos-apps/NameOfThePanelComeHere/_nodeBase_/fullUsagePanel-en.org]]
+* Overview and Relevant Pointers
+#+end_org """
+
+from bisos import b
+# from bisos.b import cmndsSeed
+from bisos.b import cs
+from bisos.b import b_io
+
+# import collections
+import typing
+
+import os
+
 from bisos.sbom import pkgsSeed  # pkgsSeed.plantWithWhich("seedSbom.cs")
 ap = pkgsSeed.aptPkg
+
+
+# --- Parameter: rootless Podman store location (graphroot) ---
+# Host-specific: MUST be a large LOCAL disk --- never NFS, never a near-full
+# "/". Set via the BISOS_PODMAN_GRAPHROOT environment variable, or edit the
+# default below for this host. Empty => storage.conf is skipped (the ~/.config
+# dirs are still created), since we must not hardcode a wrong path.
+PODMAN_GRAPHROOT = ""
+
+
+def rootlessPodmanUserConfig():
+    """Post-install step: lay down the rootless-Podman ~/.config (idempotent).
+
+    Declared as a func= post-install pseudo-entry (per the sbom-authoring
+    skill), NOT attached to a real package. Creates
+    ~/.config/containers/systemd/ and, when a graphroot is given,
+    ~/.config/containers/storage.conf pointing the store at a large local disk.
+
+    graphroot is a parameter: BISOS_PODMAN_GRAPHROOT env, else PODMAN_GRAPHROOT
+    above; empty => storage.conf skipped. Root-level items (user@.service
+    cgroup-delegation drop-in, loginctl enable-linger) are handled elsewhere.
+    """
+    graphroot = os.environ.get("BISOS_PODMAN_GRAPHROOT", PODMAN_GRAPHROOT)
+    outcome = b.subProc.WOpW(invedBy=None, log=1).bash(
+        f"""
+mkdir -p ~/.config/containers/systemd
+if [ -n "{graphroot}" ]; then
+  if [ ! -f ~/.config/containers/storage.conf ]; then
+    mkdir -p "{graphroot}"
+    printf '[storage]\\ndriver = "overlay"\\ngraphroot = "%s"\\n' "{graphroot}" > ~/.config/containers/storage.conf
+    echo "wrote ~/.config/containers/storage.conf (graphroot={graphroot})"
+  else
+    echo "~/.config/containers/storage.conf exists --- left as is"
+  fi
+else
+  echo "BISOS_PODMAN_GRAPHROOT unset --- skipped storage.conf (dirs created)"
+fi
+""")
+
+
+def rootlessCgroupDelegation():
+    """Root: enable cgroup v2 controller delegation for user sessions.
+
+    Writes /etc/systemd/system/user@.service.d/delegate.conf and reloads
+    systemd, so rootless containers can be given cpu/io/memory/pids. Privileged
+    steps run via a single `sudo -s` shell. Takes effect on the next
+    user-manager start (re-login or `loginctl terminate-user`).
+    """
+    outcome = b.subProc.WOpW(invedBy=None, log=1).bash(
+        f"""
+sudo -s <<'EOF'
+mkdir -p /etc/systemd/system/user@.service.d
+cat > /etc/systemd/system/user@.service.d/delegate.conf <<'CONF'
+[Service]
+Delegate=cpu cpuset io memory pids
+CONF
+systemctl daemon-reload
+echo "wrote /etc/systemd/system/user@.service.d/delegate.conf --- re-login for it to take effect"
+EOF
+""")
+
+
+def rootlessLingerEnable():
+    """Root: enable lingering for the invoking user, so their user services
+    (Quadlet containers) persist across logout and start at boot. The target
+    user is captured before entering the `sudo -s` shell.
+    """
+    outcome = b.subProc.WOpW(invedBy=None, log=1).bash(
+        f"""
+targetUser="$(id -un)"
+sudo -s <<EOF
+loginctl enable-linger "$targetUser"
+echo "enabled linger for $targetUser"
+EOF
+""")
+
 
 aptPkgsList = [
     # Rootless-sysd model: rootless Podman host running systemd-PID-1
@@ -17,8 +108,110 @@ aptPkgsList = [
     # Multi-arch image builds (build.bash without -d, linux/amd64,arm64).
     ap("qemu-user-static"),  # cross-arch emulation
     ap("binfmt-support"),    # binfmt registration for qemu-user-static
+
+    # Post-install steps (NOT packages): func= pseudo-entries running custom
+    # shell logic, per the sbom-authoring skill. Placed last so podman etc. are
+    # installed first. User-scoped first, then the two root-scoped (sudo) steps.
+    ap("rootlessPodmanUserConfig", func=rootlessPodmanUserConfig),  # ~/.config (no sudo)
+    ap("rootlessCgroupDelegation", func=rootlessCgroupDelegation),  # root: delegation drop-in
+    ap("rootlessLingerEnable", func=rootlessLingerEnable),          # root: loginctl enable-linger
 ]
+
+# --- RHEL / dnf host packages (reference only) ---
+# bisos.sbom currently exposes only aptPkg/pipPkg (no dnf/rpm helper), and
+# setup() takes no dnf list --- so these are documented here and installed
+# manually on RHEL/CentOS hosts until dnf support is added to bisos.sbom.
+#
+# NOTE on RHEL 8: it defaults to cgroup v1, where rootless-sysd does NOT work.
+# The runnable systemd variant there is *privileged* (docker + the
+# docker-compose.cgv1.yml overlay), so a container engine is the real need.
+# The rootless stack below matters only if the host is moved to cgroup v2.
+dnfPkgsList = [
+    "podman",              # container engine (also usable for the privileged variant)
+    "crun",                # OCI runtime
+    "fuse-overlayfs",      # rootless overlay storage driver
+    "slirp4netns",         # rootless networking (RHEL 8 default; passt via EPEL if newer)
+    "shadow-utils",        # newuidmap/newgidmap (rootless userns)
+    "container-selinux",   # SELinux policy for containers (RHEL)
+    # via EPEL if needed: passt, qemu-user-static  (binfmt is handled by systemd-binfmt)
+    # Docker path instead of podman: docker-ce docker-compose-plugin (Docker's RHEL repo)
+]
+# dnfPkgsList is intentionally NOT passed to pkgsSeed.setup() --- no dnf support yet.
+
 
 pkgsSeed.setup(
     aptPkgsList=aptPkgsList,
 )
+
+
+####+BEGIN: b:py3:cs:cmnd/classHead :cmndName "readme" :extent "verify" :comment "Describe" :parsMand "" :parsOpt "" :argsMin 0 :argsMax 0 :pyInv ""
+""" #+begin_org
+*  _[[elisp:(blee:menu-sel:outline:popupMenu)][±]]_ _[[elisp:(blee:menu-sel:navigation:popupMenu)][Ξ]]_ [[elisp:(outline-show-branches+toggle)][|=]] [[elisp:(bx:orgm:indirectBufOther)][|>]] *[[elisp:(blee:ppmm:org-mode-toggle)][|N]]*  CmndSvc-   [[elisp:(outline-show-subtree+toggle)][||]] <<readme>>  *Describe*  =verify= ro=cli   [[elisp:(org-cycle)][| ]]
+#+end_org """
+class readme(cs.Cmnd):
+    cmndParamsMandatory = [ ]
+    cmndParamsOptional = [ ]
+    cmndArgsLen = {'Min': 0, 'Max': 0,}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(self,
+             rtInv: cs.RtInvoker,
+             cmndOutcome: b.op.Outcome,
+    ) -> b.op.Outcome:
+        """Describe"""
+        failed = b_io.eh.badOutcome
+        callParamsDict = {}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, None).isProblematic():
+            return failed(cmndOutcome)
+####+END:
+        descriptionStr = """\
+** Scope: BISOS Docker/Podman host provisioning (for bro_dockerfiles images)
+
+** Components installed (apt):
+  podman, crun, uidmap, fuse-overlayfs, dbus-user-session, slirp4netns, passt,
+  qemu-user-static, binfmt-support
+
+** Post-install steps (func= pseudo-entries):
+  rootlessPodmanUserConfig  -- user: ~/.config/containers/{systemd/,storage.conf}
+                               (set BISOS_PODMAN_GRAPHROOT to a large LOCAL disk).
+  rootlessCgroupDelegation  -- root (sudo): user@.service Delegate= drop-in.
+  rootlessLingerEnable      -- root (sudo): loginctl enable-linger <user>.
+  (The two root steps use sudo; delegation needs a re-login to take effect.)
+
+** Installation:
+  dockerProc-sbom.pcs -i sbom_fullUpdate
+
+** RHEL note: host packages there are dnf (see dnfPkgsList in this file); on
+  cgroup-v1 RHEL 8 the runnable variant is privileged, not rootless-sysd.\
+"""
+        print(descriptionStr)
+
+        return cmndOutcome.set(
+            opError=b.op.OpError.Success,
+            opResults=None,
+        )
+
+def examples_csu() -> b.op.Outcome:
+    """Common Usage Examples for this Command-Service Unit"""
+
+    cmnd = cs.examples.cmndEnter
+    literal = cs.examples.execInsert
+
+    cmndOutcome = b.op.Outcome()
+
+    cs.examples.menuChapter('*dockerProc Host Provisioning Examples*')
+    if not (resStr := b.subProc.Op(outcome=cmndOutcome, log=0).bash(
+       f"""which podman""").stdout):
+        pass
+
+    literal(f"which podman # {resStr.strip()}")
+    literal("podman --version")
+
+    cmnd('readme', comment=" # An overview short description")
+
+    cs.examples.menuChapter('*Install / Update*')
+    literal("dockerProc-sbom.pcs -i sbom_fullUpdate")
+    literal("BISOS_PODMAN_GRAPHROOT=/path/on/large/local/disk dockerProc-sbom.pcs -i sbom_fullUpdate  # set the store location")
+
+    cs.examples.menuChapter('*End-Of dockerProc Examples*')
+    return cmndOutcome
