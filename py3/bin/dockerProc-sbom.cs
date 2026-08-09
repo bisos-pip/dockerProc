@@ -4,10 +4,6 @@ from bisos.sbom import pkgsSeed  # pkgsSeed.plantWithWhich("seedSbom.cs")
 ap = pkgsSeed.aptPkg
 
 aptPkgsList = [
-    # Vagrant-VM model (fresh-Debian test rig via QEMU/libvirt).
-    ap("vagrant"),
-    ap("packer"),
-
     # Rootless-sysd model: rootless Podman host running systemd-PID-1
     # containers (debian/{12,13}/rootless-sysd) without --privileged.
     ap("podman"),            # container engine
