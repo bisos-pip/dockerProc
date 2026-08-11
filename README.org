@@ -1,5 +1,5 @@
-#+title: bisos.dockerProc: Facilities for Creating and Managing Vagrant Packer Base Boxes
-#+DATE: <2024-02-19 Mon 16:27>
+#+title: bisos.dockerProc: Docker/Podman container image lifecycle via Spread Planted Command Services
+#+DATE: <2026-08-11 Tue>
 #+AUTHOR: Mohsen BANAN
 #+OPTIONS: toc:4
 
@@ -7,26 +7,29 @@
 
 |----------------------+------------------------------------------------------------------|
 | ~Blee Panel Controls~: | [[elisp:(show-all)][Show-All]] : [[elisp:(org-shifttab)][Overview]] : [[elisp:(progn (org-shifttab) (org-content))][Content]] : [[elisp:(delete-other-windows)][(1)]] : [[elisp:(progn (save-buffer) (kill-buffer))][S&Q]] : [[elisp:(save-buffer)][Save]]  : [[elisp:(kill-buffer)][Quit]]  : [[elisp:(bury-buffer)][Bury]] |
-| ~Panel Links~:         | [[file:./py3/panels/bisos.facter/_nodeBase_/fullUsagePanel-en.org][Repo Blee Panel]] --  [[file:/bisos/git/auth/bxRepos/bisos-pip/facter/py3/panels/bisos.facter/_nodeBase_/fullUsagePanel-en.org][Blee Panel]]                                                |
-| ~See Also~:            | [[https://pypi.org/project/bisos.facter][At PYPI]] : [[https://github.com/bisos-pip/pycs][bisos.PyCS]]                                             |
+| ~Panel Links~:         | [[file:./py3/panels/bisos.dockerProc/_nodeBase_/fullUsagePanel-en.org][Repo Blee Panel]] --  [[file:/bisos/git/auth/bxRepos/bisos-pip/dockerProc/py3/panels/bisos.dockerProc/_nodeBase_/fullUsagePanel-en.org][Blee Panel]]                                   |
+| ~See Also~:            | [[https://pypi.org/project/bisos.dockerProc][At PYPI]] : [[https://github.com/bisos-pip/pycs][bisos.PyCS]]                                             |
 |----------------------+------------------------------------------------------------------|
 
 #+END:
 
 * Overview
 
-/bisos.dockerProc/ provides various facilities for creation and management of
-Vagrant Packer Base Boxes.
+/bisos.dockerProc/ manages the lifecycle of Docker and Podman container
+images via *Spread Planted Command Services* (=.spcs=). The leaf directory
+path in a companion image-specifications repo *is* the configuration:
+=bisos.dockerProc= parses the leaf path to derive engine (docker vs
+podman), init profile (confined / privileged / rootless-sysd), base image,
+host-side ports, cgroup variant support, and everything else it needs to
+build, run, verify, and clean containers.
 
-/bisos.dockerProc/ is a python package that uses the [[https://github.com/bisos-pip/pycs][PyCS-Framework]] for its
-implementation. It is a BISOS-Capability and a Standalone-BISOS-Package.
+The companion image-specifications repo lives at\\
+[[https://github.com/bxObjects/bro_dockerfiles]] --- a set of Dockerfiles for
+XFCE4 desktops over VNC / noVNC / SSH on Debian 12 and 13, organised by
+init/isolation profile.
 
-/bisos.dockerProc/ is data driven. By itself it is incomplete. It operates
-on well structured directories which contain packer base box specifications.
-Separating packer specifications from the bisos.dockerProc package allows
-for wide usage and expansion. BISOS-related packer specifications that can be
-processed with bisos.dockerProc are available at:\\
-[[https://github.com/bxObjects/bro_vagrantDebianBaseBoxes]]
+/bisos.dockerProc/ is a python package that uses the [[https://github.com/bisos-pip/pycs][PyCS-Framework]].
+It is a BISOS-Capability and a Standalone-BISOS-Package.
 
 #+BEGIN: b:org:pypi:readme/pkgDocumentation :pkgName "capability-cs" :comment "basic"
 
@@ -43,18 +46,18 @@ then read the figure.
 
 *Legend:*
 
-| Element                        | Meaning                                                                    |
-|--------------------------------+----------------------------------------------------------------------------|
-| Light-blue cluster (left)      | *Remote User* --- corporate host, only port 22 outbound.                   |
-| Pink cluster (middle)          | *Container Platform* --- the powerful VM; hosts engines, =.spcs=, registrar. |
-| Green cluster (right)          | *Container Instances* --- one image, many running instances per user.      |
-| Dashed border (registrar)      | *Design-only in this phase* --- shape reserved, not yet implemented.       |
-| Yellow cylinder                | Persistent store / path-derived identity source.                           |
-| Salmon =rarrow= shape          | CS / =.spcs= dispatcher.                                                   |
-| Blue rectangle                 | Engine / CLI parameter / port.                                             |
-| Purple edge                    | ssh tunnel path (Remote User → Platform via port 22 → Instances).          |
-| Blue dashed edge               | Registrar read (design-only; two consumers: =.spcs= and Remote User).      |
-| Dotted "planted in" edge       | Which leaves in =bro_dockerfiles= plant which =.spcs=.                     |
+| Element                   | Meaning                                                                  |
+|---------------------------+--------------------------------------------------------------------------|
+| Light-blue cluster (left) | *Remote User* --- corporate host, only port 22 outbound.                   |
+| Pink cluster (middle)     | *Container Platform* --- the powerful VM; hosts engines, =.spcs=, registrar. |
+| Green cluster (right)     | *Container Instances* --- one image, many running instances per user.      |
+| Dashed border (registrar) | *Design-only in this phase* --- shape reserved, not yet implemented.       |
+| Yellow cylinder           | Persistent store / path-derived identity source.                         |
+| Salmon =rarrow= shape       | CS / =.spcs= dispatcher.                                                   |
+| Blue rectangle            | Engine / CLI parameter / port.                                           |
+| Purple edge               | ssh tunnel path (Remote User → Platform via port 22 → Instances).        |
+| Blue dashed edge          | Registrar read (design-only; two consumers: =.spcs= and Remote User).      |
+| Dotted "planted in" edge  | Which leaves in =bro_dockerfiles= plant which =.spcs=.                       |
 
 [[file:py3/images/containerProcArchitecture.png]]
 
@@ -117,170 +120,353 @@ then read the figure.
 * Table of Contents     :TOC:
 - [[#overview][Overview]]
 - [[#full-design-at-a-glance][Full Design at a Glance]]
-- [[#a-standalone-piece-of-bisos-----bystar-internet-services-operating-system][A Standalone Piece of BISOS --- ByStar Internet Services Operating System]]
-- [[#prior-art-and-similar-art][Prior Art and Similar Art]]
-  - [[#bisos-vagrant-debian-base-boxes-packer-specifications][BISOS Vagrant Debian Base Boxes Packer Specifications]]
-- [[#installation-of-bisosdockerproc-package][Installation of bisos.dockerProc Package]]
+- [[#part-of-bisos--bystar-internet-services-operating-system][Part of BISOS — ByStar Internet Services Operating System]]
+- [[#bisosdockerproc-is-a-command-only-pycs-facility][bisos.dockerProc is a Command-Only PyCS Facility]]
+- [[#the-spcs-pattern-directory-path-as-configuration][The spcs Pattern: Directory Path as Configuration]]
+  - [[#companion-repo-bro_dockerfiles][Companion Repo: bro_dockerfiles]]
+  - [[#path-to-parameter-mapping][Path-to-parameter Mapping]]
+- [[#three-initisolation-profiles][Three Init/Isolation Profiles]]
+- [[#installation][Installation]]
   - [[#installation-with-pip][Installation With pip]]
   - [[#installation-with-pipx][Installation With pipx]]
-- [[#usage-of-bisosdockerproc-package][Usage of bisos.dockerProc Package]]
-  - [[#first-install-the-packer-box-specifications][First, Install the packer box specifications]]
-  - [[#vagrantboxproccs-menu][vagrantBoxProc.cs Menu]]
-- [[#bisos-use-of-built-vagrant-boxes][BISOS Use of Built Vagrant Boxes]]
-- [[#best-developed-with-blee][Best Developed With Blee]]
-- [[#some-relevant-pointers][Some Relevant Pointers]]
+- [[#usage][Usage]]
+  - [[#planting-a-spcs-file-in-a-leaf-directory][Planting a =.spcs= File in a Leaf Directory]]
+  - [[#the-seed-commands-build--composeup--run--verify--status--clean][The Seed Commands: build / composeUp / run / verify / status / clean]]
+  - [[#host-readiness-check-podmanhostverifycs][Host Readiness Check: =podmanHostVerify.cs=]]
+  - [[#docker--podman-installation-via--sbompcs-files][Docker / Podman Installation via =-sbom.pcs= Files]]
+  - [[#cheat-sheet-dockercmndscs--podmancmndscs][Cheat Sheet: =dockerCmnds.cs= / =podmanCmnds.cs=]]
+- [[#key-files][Key Files]]
+- [[#documentation-and-blee-panels][Documentation and Blee-Panels]]
 - [[#support][Support]]
 
-* A Standalone Piece of BISOS --- ByStar Internet Services Operating System
+* Part of BISOS — ByStar Internet Services Operating System
 
-Layered on top of Debian, [[https://github.com/bisos][BISOS]]: (By* Internet Services Operating System) is a
-unified and universal framework for developing both internet services and
-software-service continuums that use internet services. See [[https://github.com/bxGenesis/start][Bootstrapping
-ByStar, BISOS and Blee]] for additional information.
-*BISOS* is a foundation for [[https://github.com/mohsenBanan][The Libre-Halaal ByStar Digital Ecosystem]] which is
-described as a cure for losses of autonomy and privacy in a book titled: [[https://github.com/bxplpc/120033][Nature
-of Polyexistentials]].
+Layered on top of Debian, *BISOS* (By* Internet Services Operating System)
+is a unified and universal framework for developing both internet services and
+software-service continuums that use internet services. See
+[[https://github.com/bxGenesis/start][Bootstrapping ByStar, BISOS and Blee]]
+for information about getting started with BISOS.
 
-bisos.dockerProc is a standalone piece of BISOS. It can be used as a self-contained
-Python package separate from BISOS. Follow the installation and usage
-instructions below for your own use.
+*BISOS* is a foundation for *The Libre-Halaal ByStar Digital Ecosystem* which
+is described as a cure for losses of autonomy and privacy in a book titled:
+[[https://github.com/bxplpc/120033][Nature of Polyexistentials]]
 
-* Prior Art and Similar Art
+/bisos.dockerProc/ is part of BISOS. It is a standalone package that can
+be used independently of the full BISOS environment.
 
-Use of Vagrant Base Boxes is quite common.
+* bisos.dockerProc is a Command-Only PyCS Facility
 
-The model of using existing base boxes by downloading them from the web is
-problematic for us, as it involves a level of trust which we consider unnecessary.
-Hashicorp provides a collection of boxes at:\\
-https://developer.hashicorp.com/vagrant/docs/boxes
+bisos.dockerProc is a command-line tool. It is a PyCS multi-unit
+command service. PyCS is a framework that converges development of CLI
+tools and services. PyCS is an alternative to FastAPI, Typer and Click.
 
-Many others, like us prefer to always build their own boxes. Many open-source
-projects and individual developers host their Vagrantfile configurations and
-associated files (like provisioning scripts) on GitHub. These repositories allow
-others to easily replicate their testing, development or production environments.
-Bento, Boxcutter, osboxes and Veewee are just few examples on github.
-See "Some Relevant Pointers" section below for more.
+bisos.dockerProc uses the PyCS-Framework to:
 
-We want to consolidate and canonicalize building of vagrant base boxes to avoid
-duplication and to improve quality of the boxes.
+1) Provide a *seed* (=containerProc-seed.cs=) and two *planted* command
+   services (=dockerProc.spcs= for docker leaves, =podmanProc.spcs= for
+   rootless-sysd leaves) that manage container image build, compose,
+   run, verify, status, and clean.
+2) Derive all operating parameters from the leaf directory path in
+   which each =.spcs= is planted --- there are no per-leaf parameter
+   files.
+3) Provide standalone helpers: =podmanHostVerify.cs= (host readiness
+   check for rootless-sysd), =dockerProc-sbom.pcs= / =podman-sbom.pcs=
+   (install docker / podman via bisos.sbom), and =dockerCmnds.cs= /
+   =podmanCmnds.cs= (cheat sheet of direct-engine invocations).
 
-For Debian, https://github.com/rgl/debian-vagrant provides a number of base
-boxes. Much of /bisos.dockerProc/ and bxObjects/bro_vagrantDebianBaseBoxe is
-based on that but our general data driven approach is different.
+The core of PyCS-Framework is the [[https://github.com/bisos-pip/b][bisos.b]] package (the
+PyCS-Foundation).
 
+* The spcs Pattern: Directory Path as Configuration
 
-** BISOS Vagrant Debian Base Boxes Packer Specifications
+A =.spcs= file (*Spread Planted Command Service*) is a thin Python file
+whose behaviour is entirely context-dependent on the directory in which
+it is planted. The *same* file content is spread across many
+directories; each instance is contextualised by its location. The leaf
+directory path encodes all parameters --- there are no per-leaf
+configuration files.
 
+Two =.spcs= variants exist here:
 
-In BISOS, the packer base box specifications are in the form of a
-BISOS Repo Object (BRO). In BISOS, the defaults are:
+- =dockerProc.spcs= --- planted in leaves that use docker.
+- =podmanProc.spcs= --- planted in leaves that use rootless podman.
+
+Both delegate to the same engine-agnostic seed, =containerProc-seed.cs=,
+which parses the leaf path (via =bisos.dockerProc.containerProc_seedInfo.paramsFromPlantPath()=)
+to derive engine, profile, ports, base image, and cgroup support.
+
+** Companion Repo: bro_dockerfiles
+
+The image specifications live in a separate repo,\\
+[[https://github.com/bxObjects/bro_dockerfiles]]. Its directory hierarchy
+encodes the configuration:
+
+#+begin_src
+debian/
+  <majorRelease>/           12 or 13
+    confined/vnc/xfce/      unprivileged, entrypoint.sh init
+      <imageName>/
+    privileged/vnc/xfce/    --privileged (docker), systemd PID 1
+      <imageName>/
+    rootless-sysd/vnc/xfce/ rootless podman, systemd PID 1
+      <imageName>/
+#+end_src
+
+Clone it alongside your other repos --- in BISOS the canonical location is
+=/bisos/git/bxRepos/bxObjects/=:
 
 #+begin_src bash
 cd /bisos/git/bxRepos/bxObjects
-git clone https://github.com/bxObjects/bro_vagrantDebianBaseBoxes.git
+git clone https://github.com/bxObjects/bro_dockerfiles.git
 #+end_src
 
-Of course, you can clone that repo anywhere (the /bisos/git/bxRepos/bxObjects is
-BISOS specific) and then just adjust the command line path to it when running
-vagrantBoxProc.cs.
+** Path-to-parameter Mapping
 
-* Installation of bisos.dockerProc Package
+Each segment of the leaf path =debian/<release>/<profile>/vnc/xfce/<imageName>/=
+encodes one dimension of the container's configuration:
 
-The sources for the bisos.dockerProc pip package are maintained at:
-https://github.com/bisos-pip/dockerProc.
+| Path segment | Parameter derived                                               |
+|--------------+-----------------------------------------------------------------|
+| =debian=       | distro (anchor segment: =paramsFromPlantPath()= anchors on this)  |
+| =<release>=    | 12 or 13 → base OS, base image tag                              |
+| =<profile>=    | =confined= / =privileged= / =rootless-sysd= → engine, init, privilege |
+| =vnc/xfce=     | desktop type → VNC/noVNC ports, xstartup variant                |
+| =<imageName>=  | image name → DockerHub name, container name                     |
 
-The bisos.dockerProc pip package is available at PYPI as
+From these, =paramsFromPlantPath()= derives: engine (docker vs podman),
+base image name, host port assignments (ssh / vnc / novnc), =--privileged=
+flag, =--isolation=chroot= for rootless podman builds, =--systemd=always=
+for podman run, and cgroup-variant support.
+
+* Three Init/Isolation Profiles
+
+The =<profile>= path segment selects one of three init/isolation profiles:
+
+| Profile       | Engine | Init                       | Privilege    | Host cgroup                      |
+|---------------+--------+----------------------------+--------------+----------------------------------|
+| =confined=      | docker | =entrypoint.sh= (no systemd) | unprivileged | v1 or v2                         |
+| =privileged=    | docker | =/sbin/init= (systemd PID 1) | =--privileged= | v1 or v2 (v1 needs cgv1 overlay) |
+| =rootless-sysd= | podman | =/sbin/init= (systemd PID 1) | rootless     | v2 only                          |
+
+- *confined*: unprivileged, no systemd; services (VNC / noVNC / sshd)
+  launched manually by =entrypoint.sh=.
+- *privileged*: full systemd as PID 1; runs =--privileged= on docker.
+  Requires the =docker-compose.cgv1.yml= overlay on cgroup-v1 hosts.
+- *rootless-sysd*: full systemd as PID 1, but *unprivileged* via
+  rootless podman. Requires cgroup v2 with controller delegation.
+  Motivated by the multi-tenant "N engineers on one shared VM" use
+  case where =--privileged= is a security dealbreaker.
+
+Rootless-sysd delivers the *systemd fidelity* of the privileged profile
+with the *security posture* of the confined profile. It is the target
+model for multi-tenant use once the Platform Registrar (see the
+[[#full-design-at-a-glance][Full Design at a Glance]] figure) is implemented.
+
+* Installation
+
+The sources for the bisos.dockerProc pip package are maintained at:\\
+https://github.com/bisos-pip/dockerProc
+
+The bisos.dockerProc pip package is available at PYPI as\\
 https://pypi.org/project/bisos.dockerProc
 
 You can install bisos.dockerProc with pip or pipx.
 
 ** Installation With pip
 
-If you need access to bisos.dockerProc as a python module, you can install it with pip:
+If you need access to bisos.dockerProc as a python module, install it with pip:
 
 #+begin_src bash
 pip install bisos.dockerProc
 #+end_src
 
-See below for this packages list of commands.
-
 ** Installation With pipx
 
-If you only need access to bisos.dockerProc on command-line, you can install it with pipx:
+If you only need access to bisos.dockerProc on the command line, install it with pipx:
 
 #+begin_src bash
 pipx install bisos.dockerProc
 #+end_src
 
 The following commands are made available:
-- dockerProc-sbom.cs  (Software Bill of Material for vagrant and packer)
-- vagrantBoxProc.cs  (The primary command line for building, adding, running and cleaning base boxes which is also a seed for vagBox.cs)
-- exmpl-vagBox.cs    (Example for planting based on the vagrantBoxProc.cs as seed.)
-- vagrantCommonCmnds.cs  (A cheat sheet for common vagrant commands.)
 
-* Usage of bisos.dockerProc Package
+- =containerProc-seed.cs= --- the engine-agnostic seed both =.spcs= files delegate to.
+- =dockerProc.spcs= --- Spread Planted CS for docker leaves (confined + privileged).
+- =podmanProc.spcs= --- Spread Planted CS for rootless-sysd leaves.
+- =dockerCmnds.cs= / =podmanCmnds.cs= --- cheat-sheet of direct-engine invocations (podmanCmnds.cs is a symlink to dockerCmnds.cs; the CS dispatches on =argv[0]=).
+- =podmanHostVerify.cs= --- host readiness check for rootless-sysd containers.
+- =dockerProc-sbom.pcs= / =podman-sbom.pcs= --- install docker / podman via [[https://github.com/bisos-pip/sbom][bisos.sbom]].
 
-** First, Install the packer box specifications
+* Usage
 
-Clone the packer box specifications somewhere. Perhaps in your home directory.
+The primary workflow is: clone =bro_dockerfiles=, =cd= into a leaf
+directory, and run =dockerProc.spcs= or =podmanProc.spcs= there. The
+=.spcs= file is already planted in each leaf as part of the companion
+repo.
+
+** Planting a =.spcs= File in a Leaf Directory
+
+For most users this is already done --- the =bro_dockerfiles= repo ships
+with =dockerProc.spcs= planted in each of the four docker leaves and
+=podmanProc.spcs= planted in each of the two rootless-sysd leaves. If you
+create a new leaf, plant the appropriate =.spcs=:
 
 #+begin_src bash
-git clone https://github.com/bxObjects/bro_vagrantDebianBaseBoxes.git
+# In a new docker leaf (confined or privileged):
+cp $(which dockerProc.spcs) .
+
+# In a new rootless-sysd leaf:
+cp $(which podmanProc.spcs) .
+
+chmod +x dockerProc.spcs   # or podmanProc.spcs
 #+end_src
 
-For BISOS we use the /bisos/git/bxRepos/bxObjects canonical directory as a base for cloning bro_vagrantDebianBaseBoxes.
+The leaf's path (=debian/<release>/<profile>/vnc/xfce/<imageName>/=)
+supplies all parameters.
 
-** vagrantBoxProc.cs Menu
+** The Seed Commands: build / composeUp / run / verify / status / clean
 
-Run:
+From any planted leaf, run the =.spcs= file with no arguments to see the
+menu of common invocations:
 
 #+begin_src bash
-vagrantBoxProc.cs
+cd /bisos/git/bxRepos/bxObjects/bro_dockerfiles/debian/13/privileged/vnc/xfce/bisos_deb13-sysd
+./dockerProc.spcs
 #+end_src
 
-Without any parameters and arguments, vagrantBoxProc.cs gives you a menu of
-common invokations.
+The available commands:
 
+| Command     | Purpose                                                                   |
+|-------------+---------------------------------------------------------------------------|
+| =build=       | =docker build= or =podman build=. =--noCache="true"= for clean build.           |
+| =composeUp=   | =docker compose up -d= (docker only). =--cgroupVer="v1"= for cgroup-v1 host.  |
+| =composeDown= | =docker compose down=. Same =cgroupVer= handling as =composeUp=.                |
+| =run=         | =podman run --systemd=always= (rootless-sysd only). =--detach="true"= for bg. |
+| =verify=      | Host-side smoke test: port + noVNC HTTP + SSH-based systemd checks.       |
+| =status=      | Engine inspect + SSH systemd status.                                      |
+| =clean=       | Stop + remove container, remove image.                                    |
 
-* BISOS Use of Built Vagrant Boxes
+Additional notes:
 
-In BISOS, we start from a Debian Vagrant Box which we consider as "fresh Debian" and we augment it to
-to become "Raw-BISOS". This process is described in: https://github.com/bxgenesis/start
+- =build= on a rootless-sysd leaf auto-builds the confined base image if
+  it is missing from podman's store.
+- =verify= is *exec-free* for rootless (uses SSH instead of =podman exec=,
+  which is unreliable on old Podman for systemd containers).
 
-Based on a platform BPO (ByStar Portable Object), Raw-BISOS can then be further augmented to become a
-reproducible specific BISOS-Platform.
+Example --- build and start the deb13 privileged image on a cgroup-v2 host:
 
-* Best Developed With Blee
+#+begin_src bash
+cd /bisos/git/bxRepos/bxObjects/bro_dockerfiles/debian/13/privileged/vnc/xfce/bisos_deb13-sysd
+./dockerProc.spcs -i build
+./dockerProc.spcs -i composeUp
+./dockerProc.spcs -i verify
+#+end_src
 
-[[https://github.com/bx-blee][Blee]]", /By* BISOS Libre-Halaal Emacs Environment/
-is a layer on top of Emacs and BISOS which creates a
-comprehensive integrated usage and development environment. Blee and BISOS are intertwined.
-This python package is developed with Blee. Its evolution is best accomplished
-through continued use of Blee.
+On a cgroup-v1 host (e.g. RHEL 8), pass =cgroupVer=v1= to compose:
 
-* Some Relevant Pointers
+#+begin_src bash
+./dockerProc.spcs -i composeUp   --cgroupVer="v1"
+./dockerProc.spcs -i composeDown --cgroupVer="v1"
+#+end_src
 
-Some relevant pointers are included:
+For rootless-sysd (podman) leaves:
 
-| *Resource*                     | *Link*                                                                                   |
-|--------------------------------+------------------------------------------------------------------------------------------|
-| Vagrant Cloud by HashiCorp     | [[https://app.vagrantup.com/][Vagrant Cloud]]                                            |
-| Bento                          | [[https://github.com/chef/bento][Bento on GitHub]]                                       |
-| Boxcutter                      | [[https://github.com/boxcutter][Boxcutter on GitHub]]                                    |
-| Veewee                         | [[https://github.com/jedi4ever/veewee][Veewee on GitHub]]                                |
-| Packer Templates by Parallels  | [[https://github.com/Parallels/vagrant-parallels][Parallels Packer Templates]]           |
-| osboxes.org                    | [[https://www.osboxes.org/][osboxes.org]]                                                |
-| Vagrant Setup by Jeff Geerling | [[https://github.com/geerlingguy/packer-boxes][Jeff Geerling's Vagrant Setup on GitHub]] |
-| rgl/debian-vagrant             | https://github.com/rgl/debian-vagrant                                                    |
+#+begin_src bash
+cd /bisos/git/bxRepos/bxObjects/bro_dockerfiles/debian/13/rootless-sysd/vnc/xfce/bisos_deb13-rootless-sysd
+./podmanProc.spcs -i build
+./podmanProc.spcs -i run --detach="true"
+./podmanProc.spcs -i verify
+#+end_src
 
+** Host Readiness Check: =podmanHostVerify.cs=
+
+Before running rootless-sysd containers on a host for the first time,
+run =podmanHostVerify.cs -i verify= to check the host meets the
+requirements: non-root user, podman installed, cgroup v2, crun OCI
+runtime, subuid/subgid ranges, XDG_RUNTIME_DIR + user systemd/D-Bus
+session, linger enabled, cgroup-v2 controller delegation, graphroot on
+local disk with free space.
+
+#+begin_src bash
+podmanHostVerify.cs -i verify
+#+end_src
+
+Reports PASS / WARN / FAIL for each check and an overall GO / NO-GO exit
+status.
+
+** Docker / Podman Installation via =-sbom.pcs= Files
+
+Two =.pcs= files use [[https://github.com/bisos-pip/sbom][bisos.sbom]] to install docker or podman on a Debian
+host with all their supporting packages:
+
+#+begin_src bash
+dockerProc-sbom.pcs -i sbom_apt_install   # installs docker-ce + friends
+podman-sbom.pcs    -i sbom_apt_install    # installs podman + rootless deps
+#+end_src
+
+The docker sbom adds Docker's official apt repository first (mirrors what
+=dockerInstall.sh= used to do); the podman sbom uses Debian's own packages.
+
+** Cheat Sheet: =dockerCmnds.cs= / =podmanCmnds.cs=
+
+For direct docker / podman command references (not routed through the
+seed --- just a documented list of the underlying engine commands), run:
+
+#+begin_src bash
+dockerCmnds.cs
+podmanCmnds.cs
+#+end_src
+
+Both print an examples menu covering inspect / images / run / compose /
+exec / cleanup. =podmanCmnds.cs= is a symlink to =dockerCmnds.cs=; the
+CS dispatches on =argv[0]= to select the docker or podman variant. The
+podman menu also includes rootless-sysd-specific commands
+(=--systemd=always=, =--isolation=chroot=, cgroup check, linger, host
+verify).
+
+* Key Files
+
+An overview of the relevant files of the bisos.dockerProc package:
+
+- =py3/bin/containerProc-seed.cs= --- the engine-agnostic seed both =.spcs= delegate to.
+- =py3/bin/dockerProc.spcs= --- Spread Planted CS for docker leaves.
+- =py3/bin/podmanProc.spcs= --- Spread Planted CS for rootless-sysd leaves.
+- =py3/bin/podmanHostVerify.cs= --- host readiness check for rootless-sysd.
+- =py3/bin/dockerProc-sbom.pcs= / =py3/bin/podman-sbom.pcs= --- engine install via [[https://github.com/bisos-pip/sbom][bisos.sbom]].
+- =py3/bin/dockerCmnds.cs= / =py3/bin/podmanCmnds.cs= --- cheat-sheet CS (symlinked).
+- =py3/bisos/dockerProc/containerProc_seedInfo.py= --- =Engine=/=Profile=/=CgroupVer= enums, =ContainerParams= dataclass, =paramsFromPlantPath()= pure function.
+- =py3/bisos/dockerProc/containerProc_seed.py= --- atexit registration.
+- =py3/bisos/dockerProc/containerProc_csu.py= --- CS command implementations (=containerProc_build=, =containerProc_composeUp=, ...).
+- =py3/images/containerProc-graphviz.pcs= --- source for the "Full Design at a Glance" figure.
+- =py3/setup.py=, =py3/pypiProc.sh= --- PyPI packaging (setup.py is dblock-driven; do not hand-edit).
+
+* Documentation and Blee-Panels
+
+bisos.dockerProc is part of the ByStar Digital Ecosystem
+[[http://www.by-star.net]].
+
+This module's primary documentation is in the form of Blee-Panels.
+Blee-Panels are in the =./py3/panels= directory. From within Blee and
+BISOS these panels are accessible under the Blee "Panels" menu.
+
+See [[file:./py3/panels/bisos.dockerProc/_nodeBase_/fullUsagePanel-en.org]]
+for a starting point.
+
+The companion repo =bro_dockerfiles= has its own README with details on
+each image variant, host cgroup v1/v2 compatibility, and the per-leaf
+build / verify recipes.
+
+/bisos.dockerProc/ is best developed with [[https://github.com/bx-blee][Blee]], the /By* BISOS
+Libre-Halaal Emacs Environment/ --- a layer on top of Emacs and BISOS
+which creates a comprehensive integrated usage and development
+environment.
 
 * Support
 
-For support, criticism, comments, and questions, please contact the
+For support, criticism, comments and questions; please contact the
 author/maintainer\\
 [[http://mohsen.1.banan.byname.net][Mohsen Banan]] at:
 [[http://mohsen.1.banan.byname.net/contact]]
-
 
 # Local Variables:
 # eval: (setq-local toc-org-max-depth 4)
