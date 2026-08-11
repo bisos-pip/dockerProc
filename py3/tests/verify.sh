@@ -59,6 +59,25 @@ try:
 except ValueError:
     print('  [PASS] unknown profile raises ValueError')
 
+# Relative-path case: this is how bisos.csSeed passes plantOfThisSeed when
+# a .spcs is invoked from its own leaf directory. Regression guard for the
+# './dockerProc.spcs' bug (was raising ValueError before resolve()).
+import os, pathlib
+leafDir = '/bisos/git/auth/bxRepos/bxObjects/bro_dockerfiles/debian/13/privileged/vnc/xfce/bisos_deb13-sysd'
+if pathlib.Path(leafDir).exists():
+    origCwd = os.getcwd()
+    os.chdir(leafDir)
+    try:
+        p = paramsFromPlantPath('./dockerProc.spcs')
+        ok = (p.profile.value == 'privileged' and p.engine.value == 'docker' and p.sshPort == 2224)
+        print(f'  [{\"PASS\" if ok else \"FAIL\"}] relative path ./dockerProc.spcs from real leaf resolves correctly')
+        if not ok:
+            failed += 1
+    finally:
+        os.chdir(origCwd)
+else:
+    print(f'  [SKIP] relative-path test (no bro_dockerfiles clone at {leafDir})')
+
 if failed:
     print(f'paramsFromPlantPath: {failed} test(s) FAILED')
     sys.exit(1)

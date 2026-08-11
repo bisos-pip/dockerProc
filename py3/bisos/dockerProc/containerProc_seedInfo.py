@@ -123,7 +123,13 @@ def paramsFromPlantPath(plantPath: str | None = None) -> ContainerParams:
     if plantPath is None:
         raise ValueError("plantPath is None and plantOfThisSeed is not set")
 
-    parts = pathlib.Path(plantPath).parts
+    # Resolve to absolute path — plantOfThisSeed may arrive as "./dockerProc.spcs"
+    # when invoked from its leaf directory. Anchor on segments of the directory
+    # containing the planted file, not the file itself.
+    resolved = pathlib.Path(plantPath).resolve()
+    if resolved.is_file():
+        resolved = resolved.parent
+    parts = resolved.parts
 
     try:
         anchor = parts.index("debian")

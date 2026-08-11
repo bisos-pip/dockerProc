@@ -36,9 +36,63 @@ def _params() -> containerProc_seedInfo.ContainerParams:
     return containerProc_seedInfo.paramsFromPlantPath()
 
 
+def _detectInContainer() -> str | None:
+    """If the current process is running inside a container, return a short
+    reason string identifying which heuristic matched. Otherwise return None.
+
+    Uses a union of well-known Linux heuristics --- none is 100% by itself,
+    but the union catches docker, podman, and most nspawn/lxc runtimes.
+    """
+    # docker creates /.dockerenv at container-start time.
+    if pathlib.Path('/.dockerenv').exists():
+        return "/.dockerenv exists (docker)"
+    # podman (and some CRI runtimes) create /run/.containerenv.
+    if pathlib.Path('/run/.containerenv').exists():
+        return "/run/.containerenv exists (podman)"
+    # cgroup path of PID 1 mentions the runtime for most container engines.
+    try:
+        cgroup = pathlib.Path('/proc/1/cgroup').read_text()
+        for marker in ('docker', 'containerd', 'libpod', 'kubepods', 'lxc'):
+            if marker in cgroup:
+                return f"/proc/1/cgroup contains {marker!r}"
+    except OSError:
+        pass
+    return None
+
+
+def _refuseIfInContainer() -> None:
+    """Raise RuntimeError if we are running inside a container.
+
+    The engine-driving commands (build, run, composeUp/Down, verify, status,
+    clean) all pass through _run(). Nesting containers is not supported here:
+    this package assumes the Container Platform is a host, not itself a
+    container. Refuse loudly rather than let the user chase confusing
+    nested-engine failures.
+    """
+    reason = _detectInContainer()
+    if reason is not None:
+        raise RuntimeError(
+            f"Refusing to run: this process appears to be inside a container "
+            f"({reason}). bisos.dockerProc's engine-driving commands are "
+            f"designed to run on the Container Platform (a host), not from "
+            f"inside a container. Run this command from the host instead."
+        )
+
+
 def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
-    b_io.ann.smart(f"Running: {' '.join(cmd)}")
-    return subprocess.run(cmd, check=check)
+    _refuseIfInContainer()
+    b_io.ann.note(f"Running: {' '.join(cmd)}")
+    try:
+        return subprocess.run(cmd, check=check)
+    except FileNotFoundError as exc:
+        # Rewrap so the atexit machinery doesn't reformat this as a
+        # misleading "seed file not found" ImportError. The user needs to see
+        # that the container engine binary is missing on this host.
+        raise RuntimeError(
+            f"Command not found: {cmd[0]!r}. Install it with "
+            f"'dockerProc-sbom.pcs -i sbom_apt_install' (docker) or "
+            f"'podman-sbom.pcs -i sbom_apt_install' (podman)."
+        ) from exc
 
 
 ###############################################################################
@@ -105,7 +159,7 @@ def _ensureConfinedBase(
     if result.returncode != 0:
         # Infer confined base context: ../../../../confined/vnc/xfce/<baseName>
         baseContext = leafDir.parents[3] / 'confined' / 'vnc' / 'xfce' / f'bisos_deb{p.release}-fresh'
-        b_io.ann.smart(f"Base image {p.baseImage} missing — building from {baseContext}")
+        b_io.ann.note(f"Base image {p.baseImage} missing — building from {baseContext}")
         _run(
             ['podman', 'build', '--isolation=chroot']
             + noCacheFlag
@@ -142,7 +196,7 @@ class containerProc_composeUp(cs.Cmnd):
 
         p = _params()
         if p.engine != containerProc_seedInfo.Engine.Docker:
-            b_io.ann.smart("composeUp is only for docker leaves; use 'run' for rootless-sysd.")
+            b_io.ann.note("composeUp is only for docker leaves; use 'run' for rootless-sysd.")
             return cmndOutcome.set(opError=b.op.OpError.Success, opResults="skipped")
 
         leafDir = pathlib.Path(p.plantPath).parent
@@ -180,7 +234,7 @@ class containerProc_composeDown(cs.Cmnd):
 
         p = _params()
         if p.engine != containerProc_seedInfo.Engine.Docker:
-            b_io.ann.smart("composeDown is only for docker leaves.")
+            b_io.ann.note("composeDown is only for docker leaves.")
             return cmndOutcome.set(opError=b.op.OpError.Success, opResults="skipped")
 
         leafDir = pathlib.Path(p.plantPath).parent
@@ -221,7 +275,7 @@ class containerProc_run(cs.Cmnd):
 
         p = _params()
         if p.engine != containerProc_seedInfo.Engine.Podman:
-            b_io.ann.smart("run is only for podman (rootless-sysd) leaves.")
+            b_io.ann.note("run is only for podman (rootless-sysd) leaves.")
             return cmndOutcome.set(opError=b.op.OpError.Success, opResults="skipped")
 
         detachFlag = ['-d'] if detach else []
@@ -279,7 +333,7 @@ class containerProc_verify(cs.Cmnd):
         if inspect.returncode != 0 or inspect.stdout.strip() != 'running':
             failures.append(f"Container {p.imageName} not running")
         else:
-            b_io.ann.smart(f"PASS: container {p.imageName} running")
+            b_io.ann.note(f"PASS: container {p.imageName} running")
 
         # 2. SSH port reachable
         nc = subprocess.run(
@@ -289,7 +343,7 @@ class containerProc_verify(cs.Cmnd):
         if nc.returncode != 0:
             failures.append(f"SSH port {p.sshPort} not reachable")
         else:
-            b_io.ann.smart(f"PASS: SSH port {p.sshPort} reachable")
+            b_io.ann.note(f"PASS: SSH port {p.sshPort} reachable")
 
         # 3. VNC port reachable
         nc = subprocess.run(
@@ -299,7 +353,7 @@ class containerProc_verify(cs.Cmnd):
         if nc.returncode != 0:
             failures.append(f"VNC port {p.vncPort} not reachable")
         else:
-            b_io.ann.smart(f"PASS: VNC port {p.vncPort} reachable")
+            b_io.ann.note(f"PASS: VNC port {p.vncPort} reachable")
 
         # 4. noVNC HTTP responds
         curl = subprocess.run(
@@ -310,16 +364,16 @@ class containerProc_verify(cs.Cmnd):
         if curl.stdout.strip() not in ('200', '301', '302'):
             failures.append(f"noVNC HTTP {p.novncPort} returned {curl.stdout.strip()!r}")
         else:
-            b_io.ann.smart(f"PASS: noVNC HTTP {p.novncPort} responds")
+            b_io.ann.note(f"PASS: noVNC HTTP {p.novncPort} responds")
 
         # 5. SSH-based systemd/service checks
         _sshVerify(p, failures, warnings)
 
         if failures:
-            b_io.ann.smart(f"FAIL: {failures}")
+            b_io.ann.note(f"FAIL: {failures}")
             return cmndOutcome.set(opError=b.op.OpError.Failure, opResults=str(failures))
         if warnings:
-            b_io.ann.smart(f"WARN: {warnings}")
+            b_io.ann.note(f"WARN: {warnings}")
 
         return cmndOutcome.set(opError=b.op.OpError.Success, opResults="All checks passed")
 
@@ -349,12 +403,12 @@ def _sshVerify(
     if out.strip() != 'systemd':
         failures.append(f"PID 1 is '{out}', expected systemd")
     else:
-        b_io.ann.smart("PASS: systemd is PID 1")
+        b_io.ann.note("PASS: systemd is PID 1")
 
     # system state
     rc, out = sshRun('systemctl is-system-running')
     if out in ('running',):
-        b_io.ann.smart("PASS: systemd state=running")
+        b_io.ann.note("PASS: systemd state=running")
     elif out in ('degraded',):
         warnings.append("WARN: systemd state=degraded (check masked units)")
     else:
@@ -366,7 +420,7 @@ def _sshVerify(
         if out != 'active':
             failures.append(f"Service {svc} is-active={out!r}")
         else:
-            b_io.ann.smart(f"PASS: {svc} active")
+            b_io.ann.note(f"PASS: {svc} active")
 
 
 ###############################################################################

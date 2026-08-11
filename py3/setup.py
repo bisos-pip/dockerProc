@@ -61,6 +61,7 @@ requires = [
 "bisos.csSeed",
 "bisos.debian",
 "bisos.sbom",
+"bisos.vagrantBaseBoxes",
 "setuptools==75.8.0",
 "wheel==0.38.4",
 ]
@@ -71,13 +72,17 @@ requires = [
 
 scripts = [
 'bin/containerProc-seed.cs',
-'bin/dockerProc.spcs',
-'bin/podmanProc.spcs',
 'bin/dockerCmnds.cs',
+'bin/dockerInstall.sh',
+'bin/dockerProc-sbom.pcs',
+'bin/dockerProc.cs',
+'bin/dockerProc.spcs',
+'bin/exmpl-dockerProc.cs',
+'bin/hostPodmanVerify.sh',
+'bin/podman-sbom.pcs',
 'bin/podmanCmnds.cs',
 'bin/podmanHostVerify.cs',
-'bin/dockerProc.cs',
-'bin/exmpl-dockerProc.cs',
+'bin/podmanProc.spcs',
 ]
 ####+END:
 
