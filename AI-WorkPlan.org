@@ -218,16 +218,22 @@ and routes accordingly. Added the missing pieces:
   (line 178 referenced =dockerProc_csu.podmanDirectCmnds()= but it was never imported).
 - Added =podmanCmnds.cs= to =setup.py= scripts list.
 
-* Stage 3: Full Design Through Graphviz --- DO NOT IMPLEMENT YET
+* Stage 3: Full Design Through Graphviz
 
 Goal: We are going to use graphviz to capture the picture of the full design
 
-** TODO [#B] Start from what is in py3/images and adapt to containerProc    :aiAndMe:
+** DONE [#B] Start from what is in py3/images and adapt to containerProc    :aiAndMe:
 SCHEDULED: <2026-08-10 Sun>
+CLOSED: [2026-08-11 Tue]
 Read the needed graphviz related skills.
 ----- AI Results: ------
+Read =graphviz-authoring= skill; used =py3/images/aiActivity-graphviz.pcs=
+in the same repo as the structural precedent. Created
+=py3/images/containerProc-graphviz.pcs= modeled on it: same header
+dblocks, =graphvizSeed.setup()= manifest at top with forward-reference
+lambda, functions-below layout, org-mode iteration-loop hint at bottom.
 
-** TODO [#B] Graph Layerings :aiAndMe:
+** DONE [#B] Graph Layerings :aiAndMe:
 SCHEDULED: <2026-08-10 Sun>
 Three execution platforms, shown as three distinct colors/swim-lanes:
 1=remoteUser, 2=containerPlatform, 3=containerInstances.
@@ -257,6 +263,274 @@ Three execution platforms, shown as three distinct colors/swim-lanes:
 - Images and instances
   Shows the image and its naming  as one. and Instances and their namings as many.
 ----- AI Results: ------
+Created =py3/images/containerProc-graphviz.pcs= producing
+=containerProcArchitecture.png=. Three color-coded LR clusters:
+lightsteelblue (Remote User), mistyrose (Container Platform), darkseagreen3
+(Container Instances). Registrar shown with dashed border to mark
+design-only. Two consumers of the registrar drawn as dodgerblue dashed
+edges: one to =.spcs= (local), one to Remote User's =.ssh/config= (over
+ssh). Purple edges show the port-22 ssh tunnel path with =LocalForward=
+to instances. Legend + walk-through added to =README.org= under a new
+=Full Design at a Glance= section. Node margins tuned so rarrow/cylinder
+labels do not crowd the shape edges.
+
+
+* Stage 4: Implement the Platform Registrar
+
+Goal: Make the design in the =containerProcArchitecture= figure real.
+Introduce a per-user, per-image, per-instance registrar on the Container
+Platform that assigns host-side ports, so multiple users on one VM ---
+and multiple instances of one image per user --- no longer collide on
+the fixed 2222/2223/... port table.
+
+The registrar is a =bisos.regfps.RegFPs= subclass following the precedent
+of =bisos.siteRegistrars.containerRegfps.Container_RegFPs=. Storage
+lives at =/bisos/platform/registrar/dockerProc/<user>/<imageName>/instance<N>/=;
+each instance directory is a =RegFPs= unit whose file-parameters
+carry the assigned =sshPort= / =vncPort= / =novncPort= (plus
+=engine=, =profile=, =plantPath=, =createdAt= for diagnostics).
+
+Two consumers must be wired --- =.spcs= (on the platform) and Remote User
+(over ssh). The design figure already shows both.
+
+** Naming conventions
+
+| Artifact                    | Name                                | Rationale                                    |
+|-----------------------------+-------------------------------------+----------------------------------------------|
+| RegFPs subclass             | =DockerProc_RegFPs=                 | Matches =Container_RegFPs= naming in siteRegistrars |
+| Registrar module            | =containerProc_regfps.py=           | Alongside containerProc_seedInfo, containerProc_csu |
+| Standalone registrar CS     | =dockerProcRegistrar.cs=            | Direct admin/inspection of the registrar     |
+| Remote-user helper CS       | =dockerProcRemoteConfig.cs=         | Generates .ssh/config on remote user's host  |
+| RegFPs base path            | =/bisos/platform/registrar/dockerProc/= | Matches figure; per-user subdirs beneath |
+
+** Storage layout (registrar file tree)
+
+#+begin_src
+/bisos/platform/registrar/dockerProc/
+  <user>/                          # posix login name
+    <imageName>/                   # e.g. bisos_deb13-sysd
+      instance0/                   # RegFPs unit dir
+        fps/
+          sshPort/value            # assigned host-side ssh port
+          vncPort/value
+          novncPort/value
+          engine/value             # docker | podman
+          profile/value            # confined | privileged | rootless-sysd
+          plantPath/value          # source leaf path (for round-trip)
+          createdAt/value          # ISO timestamp
+      instance1/
+      ...
+#+end_src
+
+Port allocation pool: e.g. =sshPort= in =20000--29999=, =vncPort= in
+=30000--39999=, =novncPort= in =40000--49999=, allocated by
+=unitsNextNu()= against the union of already-assigned ports in that pool
+(scanning all users, since ports are host-global).
+
+* Stage 4 TODOs
+
+** +
+** TODO [#A] Add =containerProc_regfps.py= module with =DockerProc_RegFPs= class :ai:
+SCHEDULED: <2026-08-11 Tue>
+Model on =bisos.siteRegistrars.containerRegfps.Container_RegFPs=
+(=/bisos/git/auth/bxRepos/bisos-pip/siteRegistrars/py3/bisos/siteRegistrars/containerRegfps.py=).
+Concretely:
+- Subclass =bisos.regfps.RegFPs=.
+- =__init__= sets =regBaseDir= to =/bisos/platform/registrar/dockerProc/<user>/<imageName>/=
+  (per-user, per-image scope).
+- =commonParamsSpecify()= module-level function declares the FPs:
+  =sshPort=, =vncPort=, =novncPort=, =engine=, =profile=, =plantPath=,
+  =createdAt=.
+- =examples_csu()= per bisos-pip convention.
+- Import =bisos.dockerProc.containerProc_seedInfo= for =Engine= / =Profile= enums.
+Uses =unitsNextNu= for instance-number allocation; port allocation is a new
+helper (see next TODO).
+----- AI Results: ------
+
+** TODO [#A] Reserve dockerProc port ranges in =bisos.banna= :aiAndMe:
+SCHEDULED: <2026-08-11 Tue>
+The total pool from which the registrar allocates ports is *not* invented
+in =bisos.dockerProc= --- it comes from =bisos.banna= (BISOS Assigned
+Names and Numbers Authority), which is the authoritative registry for
+BISOS TCP port numbers. Never hardcode ports that banna could track.
+
+Add three range-typed entries to
+=/bisos/git/auth/bxRepos/bisos-pip/banna/py3/bisos/banna/tcpPorts.py=,
+covering the ssh / vnc / novnc pools the dockerProc registrar will
+manage. Naming: =dockerProcInstancesSshRange=,
+=dockerProcInstancesVncRange=, =dockerProcInstancesNovncRange=.
+
+Current =tcpPorts.py= carries only *individual* port assignments
+(=TcpPortNuInfo= singletons). This TODO likely also requires introducing
+a range-typed sibling class (e.g. =TcpPortRangeInfo= with =portNuLow=
+/ =portNuHigh= / =rangeName= / =rangeDescription=) and a corresponding
+=tcpPortRangesAssignedList= singleton, following the same pattern as
+=TcpPortsAssignedList=. This is a =bisos.banna= extension, not a
+=bisos.dockerProc= concern --- do this in the banna repo, coordinate
+with the banna maintainer if that is a different session.
+
+Concrete ranges to reserve (unless banna maintainer prefers other
+numbers): =sshRange= = 20000--29999, =vncRange= = 30000--39999,
+=novncRange= = 40000--49999. Pick the exact numbers by scanning
+=tcpPorts.py= for conflicts with existing individual assignments before
+committing.
+
+Update the =banna-lookup= skill's SKILL.md with a *TCP Port Ranges*
+section documenting how to consume range entries (mirror the "TCP Port
+Numbers" section that already exists for individual ports).
+----- AI Results: ------
+
+** TODO [#A] Implement port-allocation helper =allocateHostPorts()= :ai:
+SCHEDULED: <2026-08-11 Tue>
+Pure function in =containerProc_regfps.py=:
+=allocateHostPorts(user, imageName) -> dict= returning
+={'sshPort': N, 'vncPort': N, 'novncPort': N}=.
+- Look up the three range endpoints from =bisos.banna.tcpPorts=
+  (=dockerProcInstancesSshRange=, =dockerProcInstancesVncRange=,
+  =dockerProcInstancesNovncRange=). Never hardcode range boundaries
+  here --- banna is the authority.
+- Scan =/bisos/platform/registrar/dockerProc/= across *all users*
+  (ports are host-global, not per-user).
+- Union all currently assigned =sshPort= / =vncPort= / =novncPort=
+  values from every =RegFPs= unit under the base path.
+- Pick the lowest free port in each range. Fail loudly with a specific
+  error if a range is exhausted (name the range and its bounds).
+- Return the triple atomically --- either all three allocated or none.
+Uses =pathlib= (per BISOS convention, never =os.path=). No PyCS Cmnd
+here --- this is a helper called by =dockerProcRegistrar_instanceCreate=.
+Depends on the previous TODO (banna range reservation) being complete.
+----- AI Results: ------
+
+** TODO [#A] Add registrar CS commands to =containerProc_csu.py= :ai:
+SCHEDULED: <2026-08-11 Tue>
+New =cs.Cmnd= classes in =containerProc_csu.py=, all following the
+existing convention (=cmndParamsMandatory=, =classHead= dblock, =cmndDocStr=,
+=b.op.Outcome= return). Each accepts an optional =--user= (defaults to
+=os.getlogin()=) and =--imageName= (defaults to =paramsFromPlantPath()=
+in a planted context).
+
+| Cmnd class                              | Purpose                                                        |
+|-----------------------------------------+----------------------------------------------------------------|
+| =dockerProcRegistrar_instanceCreate=    | Allocate a new =instanceN= unit + host ports. Returns port triple. |
+| =dockerProcRegistrar_instanceRead=      | Read one =instanceN=; return its FPs as dict.                  |
+| =dockerProcRegistrar_instanceUpdate=    | Overwrite one FP in an existing =instanceN=. Rarely used.      |
+| =dockerProcRegistrar_instanceDelete=    | Remove an =instanceN= unit (releases its ports back to pool).  |
+| =dockerProcRegistrar_instanceList=      | List all =instanceN= for =<user>/<imageName>=. Table output.   |
+| =dockerProcRegistrar_userInstancesList= | List all instances for =<user>= across all images.             |
+| =dockerProcRegistrar_allInstancesList=  | List every registered instance on this platform (admin view).  |
+| =dockerProcRegistrar_portsShow=         | Show pool usage: assigned vs free counts.                      |
+
+Each command wraps =DockerProc_RegFPs= method calls (=unitCreate=,
+=unitRead=, =unitUpdate=, =unitDelete=, =unitsList=). The
+=_instanceCreate= command additionally calls =allocateHostPorts()=
+before writing the FPs.
+----- AI Results: ------
+
+** TODO [#A] Wire =.spcs= commands to consume the registrar :ai:
+SCHEDULED: <2026-08-11 Tue>
+Modify existing seed commands in =containerProc_csu.py= so they
+resolve their ports from the registrar when a matching =instanceN=
+exists, and fall back to the current path-derived fixed ports when
+none does (backwards compatibility during rollout).
+
+Specifically:
+- =containerProc_composeUp= / =containerProc_composeDown= --- read
+  =sshPort= / =vncPort= / =novncPort= from registrar; export them as
+  environment variables consumed by =docker-compose.yml= via
+  =${SSH_PORT:-2222}=-style defaults. This requires a small edit to
+  each leaf's =docker-compose.yml=.
+- =containerProc_run= (podman rootless-sysd) --- swap literal
+  =-p 2225:22= etc. for the registrar-resolved values.
+- =containerProc_verify= --- probe the registrar-resolved host ports,
+  not the fixed table.
+
+Accept a new =--instance= arg (default =instance0=) so users can select
+among multiple instances of the same image. If =--instance= is not
+provided and multiple exist, fail loudly listing them.
+----- AI Results: ------
+
+** TODO [#B] Add =dockerProcRegistrar.cs= --- standalone admin CS :ai:
+SCHEDULED: <2026-08-11 Tue>
+New file =py3/bin/dockerProcRegistrar.cs= (cs-mu classification, full
+COMEEGA dblock structure per the =bisos-pip-setup-py= skill). Imports
+=containerProc_csu= into its =csuList= so all
+=dockerProcRegistrar_*= commands become directly invocable without
+going through a planted =.spcs=. Primary use case: platform-admin
+inspection and cleanup ("show me every instance on this VM", "prune
+dead instances whose containers are gone").
+Add to =setup.py= scripts (dblock-driven --- update the header, do NOT
+hand-edit the body). Add to =py3/tests/verify.sh= smoke test.
+----- AI Results: ------
+
+** TODO [#B] Add =dockerProcRemoteConfig.cs= --- Remote User's =.ssh/config= generator :ai:
+SCHEDULED: <2026-08-11 Tue>
+New file =py3/bin/dockerProcRemoteConfig.cs= (cs-mu). Runs *on the
+Remote User's workstation*, connects to the Container Platform over ssh
+(port 22), reads the registrar for a given =<user>= (default: current
+posix user), and prints or writes =.ssh/config= =Host= + =LocalForward=
+stanzas. One =Host= block per registered =instanceN=.
+
+Commands:
+
+| Cmnd class                 | Purpose                                                        |
+|----------------------------+----------------------------------------------------------------|
+| =remoteConfig_generate=      | Print =.ssh/config= stanzas to stdout (default).                 |
+| =remoteConfig_writeToFile=   | Merge/replace stanzas in =~/.ssh/config= under a marked section. |
+| =remoteConfig_listInstances= | Read the registrar (via ssh) and print a summary table.        |
+
+Mandatory param =--platformHost= (the Container Platform's ssh host);
+optional =--user= (default current). Fetches registrar data with
+=ssh <platformHost> dockerProcRegistrar.cs -i dockerProcRegistrar_userInstancesList=
+and parses the output.
+Add to =setup.py= scripts and to =py3/tests/verify.sh=.
+----- AI Results: ------
+
+** TODO [#B] Update =docker-compose.yml= templates in =bro_dockerfiles= leaves :aiAndMe:
+SCHEDULED: <2026-08-11 Tue>
+Replace hardcoded =ports:= entries (e.g. =2223:22=, =5902:5901=,
+=6902:6901=) with =${SSH_PORT:-<fallback>}:22=, etc. Fallback values
+keep the current single-user behavior working when no registrar is
+consulted. Six leaves to update (four docker + two rootless-sysd's
+=run.bash=). Coordinated with the =.spcs= wiring above --- do these
+together so a rollout is atomic per leaf.
+----- AI Results: ------
+
+** TODO [#B] Add registrar tests to =py3/tests/verify.sh= :ai:
+SCHEDULED: <2026-08-11 Tue>
+Extend existing verify.sh with:
+- =allocateHostPorts()= pure-function test: create a scratch base dir
+  with two mock instances; assert the next allocation avoids their ports.
+- =DockerProc_RegFPs= round-trip: unitCreate → unitRead → unitDelete,
+  asserting FPs match on read.
+- =dockerProcRegistrar.cs= smoke test (no-args → examples menu).
+- =dockerProcRemoteConfig.cs= smoke test (no-args → examples menu).
+Uses a =tmp= dir under =./= as the scratch base path via a
+=DOCKERPROC_REGISTRAR_BASE= env override (see next TODO).
+----- AI Results: ------
+
+** TODO [#B] Support =DOCKERPROC_REGISTRAR_BASE= env override :ai:
+SCHEDULED: <2026-08-11 Tue>
+In =DockerProc_RegFPs.__init__=, honor the =DOCKERPROC_REGISTRAR_BASE=
+environment variable if set, falling back to
+=/bisos/platform/registrar/dockerProc/=. This is needed for
+=verify.sh= to run without a real BISOS installation. Document in the
+class docstring.
+----- AI Results: ------
+
+** TODO [#C] Document the registrar in README.org :ai:
+SCHEDULED: <2026-08-11 Tue>
+Once implementation is done, update =README.org=:
+- Remove the "design-only" caveat around the Platform Registrar in the
+  =Full Design at a Glance= section.
+- Regenerate the graphviz figure with the dashed registrar border
+  changed to solid (a one-line change in =containerProc-graphviz.pcs=).
+- Add a new =Multi-Tenant Usage: Registrar Workflow= section under
+  =Usage= documenting: registering an instance, listing instances,
+  generating =.ssh/config= on the Remote User.
+- Update =_description.org= similarly (or let =pypiProc.sh= regenerate).
+----- AI Results: ------
+
+** -
 
 
 

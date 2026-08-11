@@ -104,7 +104,8 @@ def containerProcArchitecture(
 
         c.node('remote_ssh',
                'ssh client\n+ LocalForward\ntunnels',
-               shape='rarrow', style='filled', fillcolor='salmon')
+               shape='rarrow', style='filled', fillcolor='salmon',
+               margin='0.3,0.2')
 
         c.node('remote_sshconfig',
                '.ssh/config\n(generated)\nLocalForward\n<host>:<port>',
@@ -132,10 +133,12 @@ def containerProcArchitecture(
         # The planted .spcs files (per-leaf) --- two variants
         c.node('spcs_docker',
                'dockerProc.spcs\n(planted in\nconfined+privileged\nleaves)',
-               shape='rarrow', style='filled', fillcolor='salmon')
+               shape='rarrow', style='filled', fillcolor='salmon',
+               margin='0.3,0.25')
         c.node('spcs_podman',
                'podmanProc.spcs\n(planted in\nrootless-sysd\nleaves)',
-               shape='rarrow', style='filled', fillcolor='salmon')
+               shape='rarrow', style='filled', fillcolor='salmon',
+               margin='0.3,0.25')
 
         # The seed both spcs delegate to
         c.node('seed',
@@ -147,7 +150,8 @@ def containerProcArchitecture(
         c.node('registrar',
                'Platform Registrar\n[DESIGN ONLY --- not implemented]\n\n/bisos/platform/registrar/dockerProc/\n<user>/<imageName>/instance0..N/\n\nassigns host-side ports\nper-instance',
                shape='cylinder', style='dashed,filled',
-               fillcolor='lightyellow', fontsize='11')
+               fillcolor='lightyellow', fontsize='11',
+               margin='0.3,0.5')
 
         # docker / podman engines
         c.node('eng_docker', 'docker engine',
