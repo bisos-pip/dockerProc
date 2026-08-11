@@ -43,7 +43,7 @@ def longDescription():
 # b:py3:pypi:setup/version Arguments  :forSys t :forPyPi t :constant "666"
 ####+BEGIN: b:py3:pypi:setup/version :comment "Auto Detected"
 
-# ./pypiUploadVer DID NOT exist -- forPypiVersion=0.1 -- forLocalVersion=0.1 -- constant=NA
+# ./pypiUploadVer DID NOT exist -- forPypiVersion=0.11 -- forLocalVersion=0.1 -- constant=NA
 def pkgVersion():
         return '0.1'
 
@@ -58,10 +58,11 @@ requires = [
 "bisos.basics",
 "bisos.common",
 "bisos.csPlayer",
+"bisos.csSeed",
 "bisos.debian",
 "bisos.sbom",
-"bisos.vagrantBaseBoxes",
 "setuptools==75.8.0",
+"wheel==0.38.4",
 ]
 ####+END:
 
@@ -69,9 +70,13 @@ requires = [
 ####+BEGIN: b:py3:pypi:setup/scripts :comment ""
 
 scripts = [
+'bin/containerProc-seed.cs',
+'bin/dockerProc.spcs',
+'bin/podmanProc.spcs',
 'bin/dockerCmnds.cs',
+'bin/podmanCmnds.cs',
+'bin/podmanHostVerify.cs',
 'bin/dockerProc.cs',
-'bin/dockerProc-sbom.cs',
 'bin/exmpl-dockerProc.cs',
 ]
 ####+END:
@@ -80,7 +85,7 @@ scripts = [
 ####+BEGIN: b:py3:pypi:setup/dataFiles :comment "Instead of ./MANIFEST.in or in pyproject.toml"
 
 data_files = [
-(' ',  ['lh-agpl3-LICENSE.txt', '_description.org', 'README.rst']),
+('',  ['lh-agpl3-LICENSE.txt', '_description.org', 'README.rst']),
 ]
 ####+END:
 

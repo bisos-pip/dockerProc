@@ -33,9 +33,90 @@ processed with bisos.dockerProc are available at:\\
 # PYPI Documentation Comes Here in _description.org
 #+END:
 
+* Full Design at a Glance
+
+The figure below captures the *full design* of =bisos.dockerProc= --- the
+three execution platforms it spans, the pieces on each, and the flows
+between them. Part of the design (the *Platform Registrar*) is not yet
+implemented and is shown with a dashed border. Scan the legend first,
+then read the figure.
+
+*Legend:*
+
+| Element                        | Meaning                                                                    |
+|--------------------------------+----------------------------------------------------------------------------|
+| Light-blue cluster (left)      | *Remote User* --- corporate host, only port 22 outbound.                   |
+| Pink cluster (middle)          | *Container Platform* --- the powerful VM; hosts engines, =.spcs=, registrar. |
+| Green cluster (right)          | *Container Instances* --- one image, many running instances per user.      |
+| Dashed border (registrar)      | *Design-only in this phase* --- shape reserved, not yet implemented.       |
+| Yellow cylinder                | Persistent store / path-derived identity source.                           |
+| Salmon =rarrow= shape          | CS / =.spcs= dispatcher.                                                   |
+| Blue rectangle                 | Engine / CLI parameter / port.                                             |
+| Purple edge                    | ssh tunnel path (Remote User → Platform via port 22 → Instances).          |
+| Blue dashed edge               | Registrar read (design-only; two consumers: =.spcs= and Remote User).      |
+| Dotted "planted in" edge       | Which leaves in =bro_dockerfiles= plant which =.spcs=.                     |
+
+[[file:py3/images/containerProcArchitecture.png]]
+
+*Reading the figure, left to right:*
+
+- *Container Platform (middle) --- the anchor.* This is the powerful VM
+  where everything runs. Image identity comes from the leaf directory
+  path in =bro_dockerfiles= (=debian/<release>/<profile>/vnc/xfce/<imageName>/=):
+  =dockerProc.spcs= is planted in =confined= and =privileged= leaves;
+  =podmanProc.spcs= is planted in =rootless-sysd= leaves. Both delegate
+  to the engine-agnostic seed =containerProc-seed.cs=, which drives
+  docker or podman according to the leaf's profile.
+
+- *Platform Registrar (middle, dashed) --- design-only in this phase.*
+  The current implementation derives host-side ports from the leaf
+  path (fixed 2222/2223/... table). This works for one user with one
+  instance per profile. The moment you have multiple users on one VM
+  --- or multiple instances of the same image per user --- fixed ports
+  collide. The Registrar is the reserved slot for that: a per-user,
+  per-image, per-instance store at
+  =/bisos/platform/registrar/dockerProc/<user>/<imageName>/instance0..N/=
+  that assigns and tracks host-side ports. Path gives the *image*
+  identity; registrar gives the *instance* identity.
+
+- *Two consumers of the registrar* (both drawn as blue dashed edges).
+  =.spcs= reads assigned ports on the platform side to do
+  =run= / =composeUp= / =verify= for the right host-side ports.
+  Remote User reads the same assignments (over ssh) to generate its
+  local =.ssh/config= =LocalForward= entries so its ssh client tunnels
+  the right host ports to the right instances.
+
+- *Remote User (left) --- corporate host, port-22-only.* Typical
+  deployment target: a workstation behind corporate networking where
+  everything but outbound port 22 is blocked. The user cannot open
+  VNC/noVNC/SSH-alt ports directly to the platform. Instead, the
+  Remote User's =.ssh/config= is populated with =LocalForward= entries
+  that tunnel the assigned host-side ports through the single
+  port-22 ssh connection. The user then points local ssh/vnc/browser
+  clients at =localhost:<forwarded-port>=. The =.ssh/config= entries
+  are a generated artefact: their content comes from the registrar.
+
+- *Container Instances (right) --- many per user.* Each running
+  container exposes the same fixed *container-side* ports (22 for ssh,
+  5901 for VNC, 6901 for noVNC). What varies per instance is the
+  *host-side* mapping. The figure shows =image-A / inst0=, =inst1=,
+  =image-B / inst0=, =... instN= as representative --- one image can
+  have many instances; a user can have many images.
+
+*What is implemented today vs what the figure describes:*
+
+- Implemented: image path → =.spcs= → seed → engine → running container.
+  The =dockerProc.spcs= and =podmanProc.spcs= planting, the seed's
+  =build= / =composeUp= / =run= / =verify= commands, and =podmanHostVerify.cs=
+  for host readiness are all in place. Verified on both docker
+  (deb13 privileged sysd, cgroup v1 + v2) and podman (deb13 rootless-sysd).
+- Not yet implemented: everything downstream of *Platform Registrar*.
+  Its shape is fixed in the figure so subsequent multi-tenant work can
+  add it without redesign.
 
 * Table of Contents     :TOC:
 - [[#overview][Overview]]
+- [[#full-design-at-a-glance][Full Design at a Glance]]
 - [[#a-standalone-piece-of-bisos-----bystar-internet-services-operating-system][A Standalone Piece of BISOS --- ByStar Internet Services Operating System]]
 - [[#prior-art-and-similar-art][Prior Art and Similar Art]]
   - [[#bisos-vagrant-debian-base-boxes-packer-specifications][BISOS Vagrant Debian Base Boxes Packer Specifications]]

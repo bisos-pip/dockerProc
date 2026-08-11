@@ -1,0 +1,163 @@
+#+title: Development Status & Continuation Handoff
+#+TAGS: me ai aiAndMe
+
+# Provenance (installed once by aiActivity.cs --- not regenerated):
+#   Date:      2026-08-07T14:10:36-07:00
+#   User:      bystar
+#   Templates: /bisos/apps/defaults/ai-templates
+#   Command:   /bisos/pipx/bin/aiActivity.cs -i initiate --activity=bisos-pip
+
+####+BEGIN: b:ai:file/particulars
+* AI Working Context
+  Working Directory: /bisos/git/auth/bxRepos/bisos-pip/dockerProc
+  File: /bisos/git/auth/bxRepos/bisos-pip/dockerProc/AI-DevStatus.org
+  Activity: bisos-pip
+  Companion Docs: AI-WORKFLOW.org, AI-Activity.org, AI-DevStatus.org, README.org
+###+END:
+
+This file is a working-state handoff so development can continue on another
+machine (which has this repo but NOT the developer's =~=). It captures the
+architecture, what works, what is untested and the design decisions made so far.
+
+This file is maintained by Claude. Updates are typically triggered by the
+=/bx-update-status= slash command, after major interactions, or before a release.
+
+* Current State
+
+As of 2026-08-10. Stage 1 scaffold is complete and verified.
+
+The package =bisos.dockerProc= now provides a containerProc spcs seed framework:
+
+- =containerProc_seedInfo.py= — enums, =ContainerParams= dataclass, =paramsFromPlantPath()=
+  pure function. Verified correct for all six leaf paths (deb12/deb13 × confined/privileged/rootless-sysd).
+- =containerProc_seed.py= — atexit registration pointing to =containerProc-seed.cs=
+- =containerProc_csu.py= — CS command stubs: =containerProc_build=, =containerProc_composeUp=,
+  =containerProc_composeDown=, =containerProc_run=, =containerProc_verify=, =containerProc_status=,
+  =containerProc_clean=
+- =containerProc-seed.cs= — seed entry point (imports both =containerProc_csu= and =plantedCsu=)
+- =dockerProc.spcs= — planted file for docker leaves (confined + privileged)
+- =podmanProc.spcs= — planted file for rootless-sysd leaves
+
+The three stale vagrant-copied files (=dockerProc_seed.py=, =dockerProcPathInfo.py=,
+=dockerProc_csu.py=) were renamed to =*.vagrant-orig= and are no longer imported.
+=setup.py= updated: removed =bisos.vagrantBaseBoxes= dependency, added =bisos.csSeed=,
+added new scripts to the scripts list.
+
+Stage 1 TODO "Scaffold bisos.dockerProc" is complete (TODOs for =paramsFromPlantPath()=
+implementation and CS command implementation are also complete as part of the scaffold).
+Remaining: end-to-end verification by planting =dockerProc.spcs= / =podmanProc.spcs= in
+the six leaf directories of =bro_dockerfiles= and running =build= + =verify=.
+
+* Architecture
+
+** Package structure
+
+#+BEGIN_SRC
+py3/bisos/dockerProc/
+  containerProc_seedInfo.py   — enums, ContainerParams, paramsFromPlantPath()
+  containerProc_seed.py       — atexit registration (seedCSXU='containerProc-seed.cs')
+  containerProc_csu.py        — CS commands (build, composeUp/Down, run, verify, status, clean)
+  __init__.py
+
+py3/bin/
+  containerProc-seed.cs       — seed entry point; imports containerProc_csu + plantedCsu
+  dockerProc.spcs             — planted file for docker leaves (confined + privileged)
+  podmanProc.spcs             — planted file for rootless-sysd (podman) leaves
+  (legacy) dockerCmnds.cs, podmanCmnds.cs, dockerProc.cs, ...
+
+py3/
+  setup.py                    — bisos.dockerProc package; requires bisos.csSeed (not vagrantBaseBoxes)
+  pyproject.toml
+  pypiProc.sh
+#+END_SRC
+
+** Path-to-parameter mapping
+
+The leaf path =debian/<release>/<profile>/vnc/xfce/<imageName>/= encodes:
+
+| Path segment  | Parameter derived                                                       |
+|---------------+-------------------------------------------------------------------------|
+| =debian=      | distro (anchor segment)                                                 |
+| =<release>=   | 12 or 13 → base OS, base image tag                                     |
+| =<profile>=   | =confined= / =privileged= / =rootless-sysd= → engine, init, privilege  |
+| =vnc/xfce=    | desktop type → VNC/noVNC ports, xstartup variant                       |
+| =<imageName>= | image name → DockerHub name, container name                             |
+
+=paramsFromPlantPath()= anchors on the ="debian"= segment in =plantOfThisSeed=.
+Raises =ValueError= loudly on unexpected path structure.
+
+** Planted files per profile
+
+| Profile         | Planted file      | Engine |
+|-----------------+-------------------+--------|
+| =confined=      | =dockerProc.spcs= | docker |
+| =privileged=    | =dockerProc.spcs= | docker |
+| =rootless-sysd= | =podmanProc.spcs= | podman |
+
+** Port table
+
+| Release | Profile         | SSH  | VNC  | noVNC |
+|---------+-----------------+------+------+-------|
+| deb12   | confined        | 2222 | 5901 | 6901  |
+| deb12   | privileged      | 2223 | 5902 | 6902  |
+| deb12   | rootless-sysd   | 2225 | 5904 | 6904  |
+| deb13   | confined        | 2222 | 5901 | 6901  |
+| deb13   | privileged      | 2224 | 5903 | 6903  |
+| deb13   | rootless-sysd   | 2226 | 5905 | 6905  |
+
+** CS commands in containerProc_csu.py
+
+| Command                    | Purpose                                                        |
+|----------------------------+----------------------------------------------------------------|
+| =containerProc_build=      | docker/podman build; =-d= local, =-n= no-cache; auto-base for rootless |
+| =containerProc_composeUp=  | docker compose up; =cgroupVer=v1= selects cgv1 overlay        |
+| =containerProc_composeDown=| docker compose down; same cgroupVer selection                  |
+| =containerProc_run=        | podman run --systemd=always (rootless-sysd leaves only)        |
+| =containerProc_verify=     | port + noVNC HTTP + SSH-based systemd/service checks; exec-free for rootless |
+| =containerProc_status=     | engine inspect + SSH systemd status                            |
+| =containerProc_clean=      | stop + rm container, rmi image                                 |
+
+* What Works
+
+- =paramsFromPlantPath()= verified for all six leaf paths (deb12/deb13 × three profiles).
+- Error cases: missing =debian= segment and unknown profile both raise =ValueError= with
+  clear messages.
+- Package imports cleanly (=bisos.dockerProc.containerProc_seedInfo= importable from venv).
+- =setup.py= updated; package is pip-installed (editable) via the existing egg-info.
+
+* What Is Untested
+
+- End-to-end: =dockerProc.spcs= not yet planted in any =bro_dockerfiles= leaf directory.
+- =containerProc_build= / =containerProc_verify= commands not yet exercised against a real
+  container; plumbing is complete but untested.
+- =containerProc_composeUp= with the cgroupVer=v1 path untested.
+- =containerProc_run= (rootless-sysd path) untested.
+- Multi-arch push path not implemented (build.bash --push equivalent not in seed yet).
+
+* Key Design Decisions
+
+- *Package name =bisos.dockerProc=, internal prefix =containerProc_=* — external name
+  reflects dominant toolchain; internal modules signal engine-agnostic abstraction.
+
+- *Two planted file names: =dockerProc.spcs= and =podmanProc.spcs=* — engine-explicit and
+  visible to engineers at the leaf level; both delegate to the same =containerProc-seed.cs=.
+
+- *=paramsFromPlantPath()= is a pure function* — no side effects; anchors on ="debian"=
+  segment (not numeric index from root) for portability across machines.
+
+- *Stale vagrant copies renamed to =*.vagrant-orig=* — preserved for reference but not
+  imported; new containerProc_* modules replace them entirely.
+
+- *=bisos.vagrantBaseBoxes= removed from requires* — was pulled in by the stale copies;
+  the new package has no vagrant dependency.
+
+- *=containerProc_verify= is exec-free for rootless* — =podman exec= is unreliable on
+  old Podman (4.3.1) for systemd containers; SSH-based checks match the existing
+  =verify.sh= behaviour.
+
+- *=degraded= is WARN not FAIL in verify* — polkit is masked in all sysd images
+  (unavoidable in containers); three services active is the real gate.
+
+# Local Variables:
+# eval: (setq-local toc-org-max-depth 4)
+# End:

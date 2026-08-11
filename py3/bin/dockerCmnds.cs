@@ -28,8 +28,9 @@
 
 ####+BEGIN: b:prog:file/particulars :authors ("./inserts/authors-mb.org")
 """ #+begin_org
-* *[[elisp:(org-cycle)][| Particulars |]]* :: Authors, version
-** This File: /l/pip/facter/py3/bin/facter.cs
+* *[[elisp:(org-cycle)][| Particulars |]]* :: This File, Authors, version
+** This File: /bxRepos/bisos-pip/dockerProc/py3/bin/dockerCmnds.cs
+** File True Name: /bisos/git/auth/bxRepos/bisos-pip/dockerProc/py3/bin/dockerCmnds.cs
 ** Authors: Mohsen BANAN, http://mohsen.banan.1.byname.net/contact
 #+end_org """
 ####+END:
@@ -92,25 +93,24 @@ import collections
    "bisos.b.cs.ro"
    "bisos.csPlayer.bleep"
    "bisos.common.commonCsParams"
-   "bisos.dockerProc.dockerProc_csu"
    "plantedCsu"
  ))
 #+END_SRC
 #+RESULTS:
-| bisos.b.cs.ro | bisos.csPlayer.bleep | bisos.common.commonCsParams | bisos.dockerProc.dockerProc_csu | plantedCsu |
+| bisos.b.cs.ro | bisos.csPlayer.bleep | bisos.common.commonCsParams | plantedCsu |
 #+end_org """
 
 ####+BEGIN: b:py3:cs:framework/csuListProc :pyImports t :csuImports t :csuParams t :csmuParams nil
 """ #+begin_org
-*  _[[elisp:(blee:menu-sel:outline:popupMenu)][±]]_ _[[elisp:(blee:menu-sel:navigation:popupMenu)][Ξ]]_ [[elisp:(outline-show-branches+toggle)][|=]] [[elisp:(bx:orgm:indirectBufOther)][|>]] *[[elisp:(blee:ppmm:org-mode-toggle)][|N]]*  CsFrmWrk   [[elisp:(outline-show-subtree+toggle)][||]] =Process CSU List= with /5/ in csuList pyImports=t csuImports=t csuParams=t
+*  _[[elisp:(blee:menu-sel:outline:popupMenu)][±]]_ _[[elisp:(blee:menu-sel:navigation:popupMenu)][Ξ]]_ [[elisp:(outline-show-branches+toggle)][|=]] [[elisp:(bx:orgm:indirectBufOther)][|>]] *[[elisp:(blee:ppmm:org-mode-toggle)][|N]]*  CsFrmWrk   [[elisp:(outline-show-subtree+toggle)][||]] ~Process CSU List~ with /4/ in csuList pyImports=t csuImports=t csuParams=t
 #+end_org """
 
 from bisos.b.cs import ro
 from bisos.csPlayer import bleep
 from bisos.common import commonCsParams
-from bisos.dockerProc import dockerProc_csu
+from bisos.dockerProc import containerProc_csu as dockerProc_csu
 
-csuList = [ 'bisos.b.cs.ro', 'bisos.csPlayer.bleep', 'bisos.common.commonCsParams', 'bisos.dockerProc.dockerProc_csu', 'plantedCsu', ]
+csuList = [ 'bisos.b.cs.ro', 'bisos.csPlayer.bleep', 'bisos.common.commonCsParams', 'plantedCsu', ]
 
 if b.cs.G.plantOfThisSeed is None:
     csuList.remove('plantedCsu')
@@ -172,9 +172,121 @@ class examples(cs.Cmnd):
         cs.examples.myName(cs.G.icmMyName(), cs.G.icmMyFullName())
         cs.examples.commonBrief()
 
-        dockerProc_csu.dockerDirectCmnds().pyCmnd()
+        csXuName = cs.G.icmMyName()
+        if "dockerCmnds" in csXuName:
+            dockerDirectCmnds().pyCmnd()
+        elif "podmanCmnds" in csXuName:
+            dockerProc_csu.podmanDirectCmnds().pyCmnd()
+        else:
+            return failed(cmndOutcome)
 
         return(cmndOutcome)
+
+
+####+BEGIN: b:py3:cs:cmnd/classHead :cmndName "dockerDirectCmnds" :comment "" :parsMand "" :parsOpt "perfName" :argsMin 0 :argsMax 0 :pyInv ""
+""" #+begin_org
+*  _[[elisp:(blee:menu-sel:outline:popupMenu)][±]]_ _[[elisp:(blee:menu-sel:navigation:popupMenu)][Ξ]]_ [[elisp:(outline-show-branches+toggle)][|=]] [[elisp:(bx:orgm:indirectBufOther)][|>]] *[[elisp:(blee:ppmm:org-mode-toggle)][|N]]*  CmndSvc-   [[elisp:(outline-show-subtree+toggle)][||]] <<dockerDirectCmnds>>  =verify= parsOpt=perfName ro=cli   [[elisp:(org-cycle)][| ]]
+#+end_org """
+class dockerDirectCmnds(cs.Cmnd):
+    cmndParamsMandatory = [ ]
+    cmndParamsOptional = [ 'perfName', ]
+    cmndArgsLen = {'Min': 0, 'Max': 0,}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(self,
+             rtInv: cs.RtInvoker,
+             cmndOutcome: b.op.Outcome,
+             perfName: typing.Optional[str]=None,  # Cs Optional Param
+    ) -> b.op.Outcome:
+
+        failed = b_io.eh.badOutcome
+        callParamsDict = {'perfName': perfName, }
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, None).isProblematic():
+            return failed(cmndOutcome)
+        perfName = csParam.mappedValue('perfName', perfName)
+####+END:
+        self.cmndDocStr(f""" #+begin_org
+** [[elisp:(org-cycle)][| *CmndDesc:* | ]]  Provide direct examples of how to use vagrant.
+        #+end_org """)
+
+        # od = collections.OrderedDict
+        # cmnd = cs.examples.cmndEnter
+        literal = cs.examples.execInsert
+
+        if b.subProc.Op(outcome=cmndOutcome, log=0).bash(
+                f"""docker image ls -q | head -1""",
+        ).isProblematic():  return(b_io.eh.badOutcome(cmndOutcome))
+        oneImageId = cmndOutcome.stdout.strip()
+
+        if b.subProc.Op(outcome=cmndOutcome, log=0).bash(
+                f"""docker ps -q | head -1""",
+        ).isProblematic():  return(b_io.eh.badOutcome(cmndOutcome))
+        oneContainerId = cmndOutcome.stdout.strip()
+
+        cs.examples.menuChapter('=Direct Docker Interface Commands=')
+
+        cs.examples.menuSection('/Initializations and Setup/')
+
+        literal("NOTYET -- PKG sbom")
+        literal("sudo groupadd docker")
+        literal("sudo usermod -aG docker $USER")
+
+        literal("https://hub.docker.com")
+        literal("docker search --help")
+
+        cs.examples.menuSection('/BISOS Docker Base Dockerfiles/')
+
+        literal("ls -ld /bisos/git/bxRepos/bxObjects/bro_dockerfiles/debian")
+        literal("tree /bisos/git/bxRepos/bxObjects/bro_dockerfiles/debian/12")
+
+        cs.examples.menuSection('/Docker:: Inpsetc, Examine/')
+
+        literal("docker ps --help")
+        literal("docker ps")
+        literal("docker ps -a")
+
+        literal("docker logs --help")
+        literal(f"docker logs {oneContainerId}")
+
+        cs.examples.menuSection('/Docker Images/')
+
+        literal("docker image --help")
+        literal("docker image ls")
+        literal(f"docker image inspect {oneImageId}")
+        literal("docker build -t debian-gnome-desktop .")
+        literal("docker build --no-cache --progress=plain -t debian-12-novnc-gnome .")
+        literal("docker image prune -a -f # Remove all unused images (dangling and unreferenced)-- forced")
+        literal("docker images -f dangling=true -q # -q provides only image ids")
+        literal("docker rmi $(docker images -f dangling=true -q) # Remove dangling images")
+
+        cs.examples.menuSection('/Docker Run Interface -- Status And Information/')
+
+        literal("docker run -d -p 8080:6080 -p 5901:5901 --name my-gnome-desktop debian-gnome-novnc")
+
+        cs.examples.menuSection('/Doocker Compose Interface/')
+
+        literal("docker compose --help")
+        literal("docker compose up -d  # Builds, (re)creates, starts, and attaches to containers for a service")
+        literal("docker compose start   # useful only to restart existing containers, never creates new containers")
+        literal("docker compose stop  # stop exisiting container")
+        literal("docker compose down  # stop exisiting container")
+        literal("docker compose config  # compile the yamel file")
+        literal("docker compose run  #  similar to docker run -ti -- opens interactive terminal, returns exit status")
+        literal("docker compose logs  #  or -f")
+
+
+        cs.examples.menuSection('/Docker:: Execute a command in a running container/')
+
+        literal("docker exec --help")
+
+        cs.examples.menuSection('/Docker Cleanups/')
+
+        literal("docker image prune -a -f # Remove all unused images (dangling and unreferenced)-- forced")
+        literal("docker system prune # DANGER:: Prune entire Docker system (containers, images, volumes, networks)")
+
+        return(cmndOutcome)
+
+
 
 ####+BEGIN: blee:bxPanel:foldingSection :outLevel 0 :sep nil :title "Main" :anchor ""  :extraInfo "Framework DBlock"
 """ #+begin_org

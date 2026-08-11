@@ -1,0 +1,209 @@
+#+title: Work Plan
+#+DATE: <2026-06-10 Wed 13:54>
+#+AUTHOR: Mohsen BANAN
+#+OPTIONS: toc:4
+#+TAGS: me ai aiAndMe
+
+# Provenance (installed once by startAiActivity.cs --- not regenerated):
+#   Date:      2026-07-28T12:48:38-07:00
+#   User:      bystar
+#   Templates: /bisos/apps/defaults/ai-templates
+#   Command:   /bisos/venv/py3/devbin/startAiActivity.cs -i initiateSub --activity=graphviz-pcs
+
+####+BEGIN: b:ai:file/particulars
+* AI Working Context
+  Working Directory: /bisos/git/auth/bxRepos/bisos-pip/startAiActivity/py3/images
+  File: /bisos/git/auth/bxRepos/bisos-pip/startAiActivity/py3/images/AI-WorkPlan.org
+  Activity: graphviz-pcs
+  Companion Docs: AI-Activity.org, AI-DevStatus.org
+####+END:
+
+This Work Plan file drives the AI collaborative development.
+Interactions are broken down into "Stages". Each Stage has a set
+of TODOs that I work with Claude to accomplish.
+
+Note to a fresh Claude: read this file together with AI-WORKFLOW.org,
+AI-Activity.org and AI-DevStatus.org to orient yourself. The =<<Context Confirmation>>=
+TODO below is the standard first step, or use =/bx-confirm0= as the automated equivalent.
+TODOs tagged =:ai:= are assigned to Claude. After completing a TODO, summarize results
+under =----- AI Results: ------= and mark it DONE.
+
+* Stage 0: Confirm AI's Understanding of This Repo's Context
+
+Goal: Confirm AI's understanding of the context and capture that in [[Context Confirmation]] TODO.
+
+
+* Stage 0 TODOs
+** +
+** TODO [#A] <<Context Confirmation>> for AI (typically triggered by /bx-confirm0) :aiAndMe:
+SCHEDULED: <2026-06-09 Tue>
+Must be repeated each time a new Claude instance is started here.
+Based on the series of files starting from CLAUDE.md in this repo,
+describe succinctly what you have understood.
+Enumerate explicitly which files you have imported and which you have considered.
+Prompt the user to confirm that the desired/appropriate model (/model) is being used for this project.
+----- AI Results: ------
+** -
+
+* Stage 1: Capture the flow of startAiActivity as graphviz.pcs
+
+Goal: Capture the flow of startAiActivity in ./aiActivity-graphviz.pcs
+
+
+* Stage 1 TODOs
+** +
+** DONE [#A] Update ./aiActivity-graphviz.pcs :aiAndMe:
+CLOSED: [2026-07-28 Tue]
+SCHEDULED: <2026-06-09 Tue>
+Will be done in parallel with Stage 2 and 3.
+Once satisfied with the image include it in the ../../README.org
+What is in ./aiActivity-graphviz.pcs is mostly a copy of
+/bxRepos/bisos-pip/graphviz-cs/py3/images/layered-graphviz.cs
+It is just an example.
+----- AI Results: ------
+Replaced the placeholder =graphvizLayers= graph with a new =aiActivityFlow=
+named graph that captures the full static structure of =startAiActivity.cs=
+in one figure. Six visible layers top-to-bottom: templates row (base +
+activity folders on same rank) → parameters (CLI flags + persistent stores)
+→ engine (=startAiActivity.cs= with six operations listed inline) →
+generated files (five org files + =.claude/=) → =.claude/= subdirs
+(=commands/=, =skills/=) → Claude Code (consumer). Encoding conventions
+established: yellow fill = symlink, pink fill = safe-copy, solid edge =
+safe-copy write, dashed edge = symlink write, blue bidirectional edge =
+persistent-store I/O, purple numbered edges 1–5 = Claude reads (walk-up +
+imports fan-out). Rendered as PNG at =py3/images/aiActivityFlow.png=,
+included in top-level =README.org= under new "Structure at a Glance"
+subsection in Overview (with legend table placed before the figure so
+the reader pre-loads conventions). Iterated through five revisions with
+user feedback --- final layout confirmed on GitHub preview.
+** -
+
+* Stage 2: Cultivate bisos/git/auth/bxRepos/bisos/defaults/ai-templates/graphviz-pcs/AI-Activity.org
+
+Goal: Based on this activity capture contours of graphviz.pcs usage.
+
+* Stage 2 TODOs
+** +
+** DONE [#A] Update AI-Activity.org :aiAndMe:
+CLOSED: [2026-07-28 Tue]
+SCHEDULED: <2026-07-28 Tue 14:06>
+/bxRepos/blee/mtdt/panels/mtdt/README/images/mtdt-graphviz.cs
+/bxRepos/blee/mtdt/images/mtdt-graphviz.cs
+/bxRepos/bisos-pip/graphviz-cs/py3/images/layered-graphviz.cs
+/bxRepos/bisos-pip/startAiActivity/py3/images/aiActivity-graphviz.pcs
+
+----- AI Results: ------
+Expanded =/bisos/git/auth/bxRepos/bisos/defaults/ai-templates/graphviz-pcs/AI-Activity.org=
+from a 19-line stub into a full activity-orientation document (~230 lines).
+Corpus for synthesis: the four graphviz.cs/pcs files listed above.
+
+Sections written:
+- What a graphviz-pcs Is --- the =bisos.graphviz.graphvizSeed= engine,
+  auto-generated PyCS examples menu, =-i ngProcess= command surface.
+- File Anatomy --- nine-part structure (shebang, dblocks, imports,
+  graph functions, seed-setup call, etc.).
+- The =namedGraph= Registration Pattern --- how graphs are wired via
+  =ng("name", func=...)= in =namedGraphsList=.
+- Running and Previewing --- the =--format=evince= iteration loop plus
+  batch =all= and =ngClean= variants.
+- Idioms: Layering vs Clusters --- rank-based vs =cluster_= subgraphs,
+  when to use each, trade-offs of mixing.
+- Semantic Colour and Shape Conventions --- distilled two tables from
+  the corpus: 16 fill colours with semantic meanings and 12 shapes
+  with roles. Rule of thumb: reuse existing meanings, avoid
+  decorative-only palette use.
+- Multi-graph Modules --- progressive-detail =_l0=/=_l1=/... pattern
+  and its variants (=clustered_name=).
+- COMEEGA Boilerplate --- what the =b:py3:cs:func/typing= and
+  =b:prog:file/particulars= dblocks generate and what not to hand-edit.
+- Embedding in README and Panels --- PNG-vs-SVG guidance,
+  legend-before-figure convention.
+- Available Skills --- points at =graphviz-authoring= (Stage 3).
+** -
+
+* Stage 3: Cultivate   /bisos/git/auth/bxRepos/bisos/defaults/ai-templates/bisos-pip/_skills/garphviz-authoring
+
+Goal: Based on this activity develope _skills/garphviz-authoring
+
+* Stage 3 TODOs
+** +
+** DONE [#A] Create _skills/garphviz-authoring  :aiAndMe:
+CLOSED: [2026-07-28 Tue]
+SCHEDULED: <2026-07-28 Tue 14:06>
+----- AI Results: ------
+Created =bisos-pip/_skills/graphviz-authoring/SKILL.md= (fixed typo
+from WorkPlan's "garphviz-authoring"). Skill lives under bisos-pip
+per user direction --- graphviz authorship is task-specific
+procedural knowledge that bisos-pip work occasionally invokes.
+
+Contents:
+- YAML frontmatter with a strong trigger description (loads when
+  Claude is authoring/modifying =*-graphviz.pcs= or embedding a
+  figure).
+- "Where to start" --- three orienting questions before drafting.
+- "The iteration loop" --- =--format=evince= is the primary loop;
+  Evince re-picks up the file on each re-render, giving sub-second
+  feedback.
+- "Adding a new graph to an existing module" --- three-step recipe
+  (write function with dblocks, add to =namedGraphsList=, verify
+  examples menu).
+- "Choosing shape and colour --- the semantic palette" --- points at
+  AI-Activity.org's full tables and lists the seven most common
+  choices inline. Rule of thumb: >6 colours = probably decorative.
+- "Layered vs cluster --- which idiom" --- when to use each,
+  what breaks when you mix them.
+- "Edge styling" --- style/direction/colour options plus
+  =constraint='false'= for cross-rank annotations and
+  space-padded numbered labels for read-order encoding.
+- "Embedding in README or panel" --- PNG for cross-tool reliability,
+  legend-before-figure.
+- "Commit both source and rendered outputs" --- include =.pcs=,
+  =.gv=, =.png=, =.pdf=, =.svg= in the images dir so consumers can
+  view without the toolchain.
+- "Debugging layout surprises" --- five common failure modes and
+  their fixes (constraint=false, cluster/rank conflicts, label
+  breaks, edge order, non-deterministic layout engines).
+- "When *not* to write a graphviz figure" --- three cases where
+  prose/table beats a diagram.
+** -
+
+* Stage 4: Improve /bxRepos/bisos-pip/graphviz-cs
+
+Goal: Based on this activity improve  /bxRepos/bisos-pip/graphviz-cs
+
+* Stage 4 TODOs
+** +
+** DONE [#A] Add latex description files.  :aiAndMe:
+CLOSED: [2026-07-28 Tue]
+SCHEDULED: <2026-07-28 Tue 14:06>
+This work will continue at /bxRepos/bisos-pip/graphviz-cs. Read the CLAUDE.md there.
+----- AI Results: ------
+Executed in the graphviz-cs repo as its own Stage 1 --- see
+=/bxRepos/bisos-pip/graphviz-cs/AI-WorkPlan.org= for full details.
+
+Summary of changes landed:
+- =NamedGraph= gets optional =title= and =caption= fields; =namedGraph()=
+  factory accepts them as kwargs.
+- New =--format=lcnt= writes plain-text =<name>.title= and
+  =<name>.caption= sidecars in the images directory. Consumers of the
+  LCNT framework (LaTeX, org-mode, Blee panels) wrap the raw text in
+  their own envelopes.
+- =--format=all= now includes lcnt; =ngClean --format=all= now removes
+  =.title= / =.caption= alongside jpg/png/gv.
+- =aiActivity-graphviz.pcs= updated to declare =title= and =caption=
+  for =aiActivityFlow=; the sidecars =aiActivityFlow.title= and
+  =aiActivityFlow.caption= now sit alongside the pdf/png/svg outputs
+  in =py3/images/=.
+
+Next steps for graphviz-pcs consumers: update
+=graphviz-pcs/AI-Activity.org= and =bisos-pip/_skills/graphviz-authoring/SKILL.md=
+to document the new =title= / =caption= kwargs and the =--format=lcnt=
+sidecar convention.
+** -
+
+
+
+# Local Variables:
+# eval: (setq-local toc-org-max-depth 4)
+# eval: (setq-local org-log-done 'time)
+# End:
