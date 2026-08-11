@@ -36,6 +36,74 @@ It is a BISOS-Capability and a Standalone-BISOS-Package.
 # PYPI Documentation Comes Here in _description.org
 #+END:
 
+* Use Cases
+
+/bisos.dockerProc/ addresses several deployment scenarios in which the
+usual "one Dockerfile, one =docker run= line" pattern falls short. If
+any of the following describes your situation, this package is
+built for you.
+
+** Reproducible XFCE Desktops on Debian 12 and 13
+
+You want an XFCE4 desktop, accessible via VNC / noVNC / SSH, built the
+same way on Debian 12 and Debian 13 so team members on either release
+get a consistent environment. Instead of maintaining two divergent
+Dockerfiles, =bro_dockerfiles= has one leaf per (release × profile ×
+image), and =dockerProc.spcs= builds and runs any of them from its
+own directory. Same commands, different leaves.
+
+** Choosing Among Three Init/Isolation Profiles for the Same Image
+
+The same desktop content can be shipped under three fundamentally
+different container postures --- and which one to use depends on the
+host's security policy, not the image content:
+
+- =confined= --- unprivileged docker; no systemd; entrypoint script
+  launches the services. Runs anywhere docker runs.
+- =privileged= --- docker with =--privileged=; systemd as PID 1;
+  services managed as systemd units. Full systemd fidelity, at the
+  cost of a privileged container.
+- =rootless-sysd= --- rootless podman; systemd as PID 1; unprivileged
+  posture. Requires cgroup v2 with controller delegation on the host.
+  Delivers systemd fidelity *and* an unprivileged security posture.
+
+The three profiles sit side-by-side in the =bro_dockerfiles= tree ---
+a single leaf-path change switches profile. This is unusual: most
+projects pick one and hide the others.
+
+** Multi-Tenant: N Engineers on One Powerful VM
+
+One VM, many users, each user running one or more container instances
+of their own. This is the scenario that motivates the Platform
+Registrar (design-only in this phase; see [[#full-design-at-a-glance][Full Design at a Glance]]):
+per-user, per-image, per-instance port assignments so users don't
+collide on the fixed 2222/5901/6901 host-side port table.
+
+The rootless-sysd profile is what makes this scenario safe --- each
+user's containers run in their own user namespace with no
+=--privileged= flag, so isolation between users is real and not a
+policy promise.
+
+** Corporate Firewall: Only Port 22 Outbound
+
+A common corporate deployment target: engineers' workstations can
+reach the internet, but only outbound port 22 is permitted. VNC,
+noVNC, and SSH-alt ports to the container platform are blocked. The
+Remote User's =.ssh/config= is populated (from the registrar) with
+=LocalForward= entries, so all container-side ports are tunnelled
+through the single port-22 ssh connection. The user then points
+local ssh / vnc / browser clients at =localhost:<forwarded-port>=.
+
+** Path-Derived Configuration Instead of Per-Leaf Config Files
+
+You want to add a new image without writing a new configuration
+file. In =bro_dockerfiles= the leaf's *path* (=debian/<release>/<profile>/vnc/xfce/<imageName>/=)
+supplies engine, profile, ports, base image, and cgroup support ---
+no =config.yaml=, no environment file, no shell variables to set.
+Copy an existing leaf to a new path, drop in a Dockerfile, plant the
+appropriate =.spcs=, and the seed does the rest. Configuration lives
+in filesystem structure, not in files.
+
 * Full Design at a Glance
 
 The figure below captures the *full design* of =bisos.dockerProc= --- the
@@ -119,6 +187,12 @@ then read the figure.
 
 * Table of Contents     :TOC:
 - [[#overview][Overview]]
+- [[#use-cases][Use Cases]]
+  - [[#reproducible-xfce-desktops-on-debian-12-and-13][Reproducible XFCE Desktops on Debian 12 and 13]]
+  - [[#choosing-among-three-initisolation-profiles-for-the-same-image][Choosing Among Three Init/Isolation Profiles for the Same Image]]
+  - [[#multi-tenant-n-engineers-on-one-powerful-vm][Multi-Tenant: N Engineers on One Powerful VM]]
+  - [[#corporate-firewall-only-port-22-outbound][Corporate Firewall: Only Port 22 Outbound]]
+  - [[#path-derived-configuration-instead-of-per-leaf-config-files][Path-Derived Configuration Instead of Per-Leaf Config Files]]
 - [[#full-design-at-a-glance][Full Design at a Glance]]
 - [[#part-of-bisos--bystar-internet-services-operating-system][Part of BISOS — ByStar Internet Services Operating System]]
 - [[#bisosdockerproc-is-a-command-only-pycs-facility][bisos.dockerProc is a Command-Only PyCS Facility]]
