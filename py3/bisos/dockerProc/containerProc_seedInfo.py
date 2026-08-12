@@ -125,11 +125,17 @@ def paramsFromPlantPath(plantPath: str | None = None) -> ContainerParams:
 
     # Resolve to absolute path — plantOfThisSeed may arrive as "./dockerProc.spcs"
     # when invoked from its leaf directory. Anchor on segments of the directory
-    # containing the planted file, not the file itself.
-    resolved = pathlib.Path(plantPath).resolve()
-    if resolved.is_file():
-        resolved = resolved.parent
-    parts = resolved.parts
+    # containing the planted file, not the file itself. Also normalise
+    # plantPath itself to the resolved absolute form so downstream consumers
+    # can do Path(p.plantPath).parent / .parents[N] without hitting IndexError
+    # from a bare "." relative path.
+    resolvedFile = pathlib.Path(plantPath).resolve()
+    if resolvedFile.is_file():
+        resolvedDir = resolvedFile.parent
+    else:
+        resolvedDir = resolvedFile
+    plantPath = str(resolvedFile)
+    parts = resolvedDir.parts
 
     try:
         anchor = parts.index("debian")
