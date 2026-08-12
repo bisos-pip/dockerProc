@@ -141,16 +141,35 @@ def commonParamsSpecify(
         argparseShortOpt=None,
         argparseLongOpt='--detach',
     )
+    csParams.parDictAdd(
+        parName='follow',
+        parDescription="Follow log output (-f). Truthy string like 'true'. For instanceLogs.",
+        parDataType=None,
+        parDefault=None,
+        parChoices=["any"],
+        argparseShortOpt=None,
+        argparseLongOpt='--follow',
+    )
+    csParams.parDictAdd(
+        parName='execCmd',
+        parDescription="Command to exec inside container (default 'bash'). For instanceExec.",
+        parDataType=None,
+        parDefault=None,
+        parChoices=["any"],
+        argparseShortOpt=None,
+        argparseLongOpt='--execCmd',
+    )
 
 
 ###############################################################################
-# build
+# Image Commands --- operate on the container image (build artefact).
+# Independent of any running instance.
 ###############################################################################
 
-class containerProc_build(cs.Cmnd):
+class containerProc_imageBuild(cs.Cmnd):
     """Build the container image for this leaf.
 
-    -d: local build only (no push).  -n: --no-cache.
+    localBuild: local build only (no push).  noCache: pass --no-cache.
     For rootless-sysd (podman) leaves, auto-builds confined base if missing.
     """
     cmndParamsMandatory = []
@@ -194,6 +213,34 @@ class containerProc_build(cs.Cmnd):
         return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Built {p.imageName}")
 
 
+class containerProc_imageDelete(cs.Cmnd):
+    """Remove the container image for this leaf (engine rmi).
+
+    Does NOT touch running or stopped instances --- use instanceDelete first
+    if the image is in use. Use fullClean for imageDelete + instanceDelete.
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = []
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """engine rmi <image>."""
+        callParamsDict = {}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        p = _params()
+        engine = p.engine.value
+        _run([engine, 'rmi', p.imageName], check=False)
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Image deleted: {p.imageName}")
+
+
 def _ensureConfinedBase(
     p: containerProc_seedInfo.ContainerParams,
     leafDir: pathlib.Path,
@@ -216,17 +263,22 @@ def _ensureConfinedBase(
 
 
 ###############################################################################
-# composeUp
+# Instance Commands --- operate on a running (or stopped) container instance.
+# Anticipate Stage 4 Platform Registrar: will gain --instance=N arg later.
 ###############################################################################
 
-class containerProc_composeUp(cs.Cmnd):
-    """Bring up a docker-compose service for this leaf.
+class containerProc_instanceUp(cs.Cmnd):
+    """Create and start the container instance for this leaf.
 
-    cgroupVer: 'v1' selects docker-compose.cgv1.yml; default selects docker-compose.yml.
-    Only applicable to docker (confined / privileged) profiles.
+    Dispatches on p.engine:
+      - docker → 'docker compose up -d' with the leaf's compose file.
+      - podman → 'podman run --systemd=always -d --name <img> -p ...'.
+
+    For docker leaves, cgroupVer='v1' selects docker-compose.cgv1.yml.
+    For podman leaves, detach='true' runs detached (default is foreground).
     """
     cmndParamsMandatory = []
-    cmndParamsOptional = ['cgroupVer']
+    cmndParamsOptional = ['cgroupVer', 'detach']
     cmndArgsLen = {'Min': 0, 'Max': 0}
 
     @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
@@ -235,119 +287,248 @@ class containerProc_composeUp(cs.Cmnd):
         rtInv: cs.RtInvoker,
         cmndOutcome: b.op.Outcome,
         cgroupVer: typing.Optional[str] = None,
-        argsList: typing.Optional[list[str]] = None,
-    ) -> b.op.Outcome:
-        """docker compose up -d, selecting v1 or v2 overlay."""
-        callParamsDict = {'cgroupVer': cgroupVer}
-        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
-            return b_io.eh.badOutcome(cmndOutcome)
-
-        p = _params()
-        if p.engine != containerProc_seedInfo.Engine.Docker:
-            b_io.ann.note("composeUp is only for docker leaves; use 'run' for rootless-sysd.")
-            return cmndOutcome.set(opError=b.op.OpError.Success, opResults="skipped")
-
-        leafDir = pathlib.Path(p.plantPath).parent
-        composeFile = (
-            'docker-compose.cgv1.yml'
-            if cgroupVer == 'v1'
-            else 'docker-compose.yml'
-        )
-        _run(['docker', 'compose', '-f', str(leafDir / composeFile), 'up', '-d'])
-        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Up: {composeFile}")
-
-
-###############################################################################
-# composeDown
-###############################################################################
-
-class containerProc_composeDown(cs.Cmnd):
-    """Bring down the docker-compose service for this leaf."""
-    cmndParamsMandatory = []
-    cmndParamsOptional = ['cgroupVer']
-    cmndArgsLen = {'Min': 0, 'Max': 0}
-
-    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
-    def cmnd(
-        self,
-        rtInv: cs.RtInvoker,
-        cmndOutcome: b.op.Outcome,
-        cgroupVer: typing.Optional[str] = None,
-        argsList: typing.Optional[list[str]] = None,
-    ) -> b.op.Outcome:
-        """docker compose down."""
-        callParamsDict = {'cgroupVer': cgroupVer}
-        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
-            return b_io.eh.badOutcome(cmndOutcome)
-
-        p = _params()
-        if p.engine != containerProc_seedInfo.Engine.Docker:
-            b_io.ann.note("composeDown is only for docker leaves.")
-            return cmndOutcome.set(opError=b.op.OpError.Success, opResults="skipped")
-
-        leafDir = pathlib.Path(p.plantPath).parent
-        composeFile = (
-            'docker-compose.cgv1.yml'
-            if cgroupVer == 'v1'
-            else 'docker-compose.yml'
-        )
-        _run(['docker', 'compose', '-f', str(leafDir / composeFile), 'down'])
-        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Down: {composeFile}")
-
-
-###############################################################################
-# run  (rootless-sysd / podman only)
-###############################################################################
-
-class containerProc_run(cs.Cmnd):
-    """podman run --systemd=always for rootless-sysd leaves.
-
-    Runs the container in the foreground (detach=False) or detached (detach=True).
-    """
-    cmndParamsMandatory = []
-    cmndParamsOptional = ['detach']
-    cmndArgsLen = {'Min': 0, 'Max': 0}
-
-    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
-    def cmnd(
-        self,
-        rtInv: cs.RtInvoker,
-        cmndOutcome: b.op.Outcome,
         detach: typing.Optional[str] = None,
         argsList: typing.Optional[list[str]] = None,
     ) -> b.op.Outcome:
-        """podman run with rootless systemd settings."""
-        callParamsDict = {'detach': detach}
+        """Create + start instance. Dispatches on p.engine."""
+        callParamsDict = {'cgroupVer': cgroupVer, 'detach': detach}
         if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
-        if p.engine != containerProc_seedInfo.Engine.Podman:
-            b_io.ann.note("run is only for podman (rootless-sysd) leaves.")
-            return cmndOutcome.set(opError=b.op.OpError.Success, opResults="skipped")
+        if p.engine == containerProc_seedInfo.Engine.Docker:
+            leafDir = pathlib.Path(p.plantPath).parent
+            composeFile = (
+                'docker-compose.cgv1.yml'
+                if cgroupVer == 'v1'
+                else 'docker-compose.yml'
+            )
+            _run(['docker', 'compose', '-f', str(leafDir / composeFile), 'up', '-d'])
+            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Up: {composeFile}")
+        else:
+            # podman rootless-sysd
+            detachFlag = ['-d'] if detach else []
+            cmd = (
+                ['podman', 'run', '--systemd=always']
+                + detachFlag
+                + [
+                    '--name', p.imageName,
+                    '-p', f'{p.sshPort}:22',
+                    '-p', f'{p.vncPort}:5901',
+                    '-p', f'{p.novncPort}:6901',
+                    p.imageName,
+                ]
+            )
+            _run(cmd)
+            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Started {p.imageName}")
 
-        detachFlag = ['-d'] if detach else []
-        cmd = (
-            ['podman', 'run', '--systemd=always']
-            + detachFlag
-            + [
-                '--name', p.imageName,
-                '-p', f'{p.sshPort}:22',
-                '-p', f'{p.vncPort}:5901',
-                '-p', f'{p.novncPort}:6901',
-                p.imageName,
-            ]
-        )
-        _run(cmd)
-        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Started {p.imageName}")
+
+class containerProc_instanceDown(cs.Cmnd):
+    """Stop the running container instance (does NOT remove --- use instanceDelete for that).
+
+    Dispatches on p.engine:
+      - docker → 'docker compose down' (stops + removes compose service).
+      - podman → 'podman stop' (stop only; container still exists).
+
+    For docker leaves, cgroupVer='v1' selects docker-compose.cgv1.yml.
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = ['cgroupVer']
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        cgroupVer: typing.Optional[str] = None,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """Stop instance. Dispatches on p.engine."""
+        callParamsDict = {'cgroupVer': cgroupVer}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        p = _params()
+        if p.engine == containerProc_seedInfo.Engine.Docker:
+            leafDir = pathlib.Path(p.plantPath).parent
+            composeFile = (
+                'docker-compose.cgv1.yml'
+                if cgroupVer == 'v1'
+                else 'docker-compose.yml'
+            )
+            _run(['docker', 'compose', '-f', str(leafDir / composeFile), 'down'])
+            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Down: {composeFile}")
+        else:
+            # podman: stop (does not rm; use instanceDelete for stop+rm)
+            _run(['podman', 'stop', p.imageName], check=False)
+            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Stopped {p.imageName}")
+
+
+class containerProc_instanceDelete(cs.Cmnd):
+    """Stop and remove the container instance (image is preserved).
+
+    Dispatches on p.engine:
+      - docker → 'docker compose down' removes the instance.
+      - podman → 'podman stop && podman rm' (in sequence).
+
+    For docker leaves, cgroupVer='v1' selects docker-compose.cgv1.yml.
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = ['cgroupVer']
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        cgroupVer: typing.Optional[str] = None,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """Stop + remove instance. Dispatches on p.engine."""
+        callParamsDict = {'cgroupVer': cgroupVer}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        p = _params()
+        if p.engine == containerProc_seedInfo.Engine.Docker:
+            # 'docker compose down' already stops + removes.
+            leafDir = pathlib.Path(p.plantPath).parent
+            composeFile = (
+                'docker-compose.cgv1.yml'
+                if cgroupVer == 'v1'
+                else 'docker-compose.yml'
+            )
+            _run(['docker', 'compose', '-f', str(leafDir / composeFile), 'down'])
+            return cmndOutcome.set(opError=b.op.OpError.Success,
+                                   opResults=f"Instance deleted: {composeFile}")
+        else:
+            _run(['podman', 'stop', p.imageName], check=False)
+            _run(['podman', 'rm', p.imageName], check=False)
+            return cmndOutcome.set(opError=b.op.OpError.Success,
+                                   opResults=f"Instance deleted: {p.imageName}")
+
+
+class containerProc_instanceRestart(cs.Cmnd):
+    """Restart the container instance in place (stop + start; state preserved)."""
+    cmndParamsMandatory = []
+    cmndParamsOptional = []
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """engine restart <container>."""
+        callParamsDict = {}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        p = _params()
+        engine = p.engine.value
+        _run([engine, 'restart', p.imageName])
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Restarted {p.imageName}")
+
+
+class containerProc_instancePs(cs.Cmnd):
+    """Show 'engine ps -a' filtered to this leaf's container.
+
+    Includes stopped instances (unlike bare 'ps'). Empty output = no instance
+    (neither running nor stopped) exists for this leaf.
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = []
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """engine ps -a --filter name=<container>."""
+        callParamsDict = {}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        p = _params()
+        engine = p.engine.value
+        _run([engine, 'ps', '-a', '--filter', f'name={p.imageName}'])
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults="listed")
+
+
+class containerProc_instanceLogs(cs.Cmnd):
+    """Show container logs (stdout+stderr since instance start).
+
+    follow='true' streams new output (tail -f). Ctrl-C to stop.
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = ['follow']
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        follow: typing.Optional[str] = None,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """engine logs [-f] <container>."""
+        callParamsDict = {'follow': follow}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        p = _params()
+        engine = p.engine.value
+        followFlag = ['-f'] if follow else []
+        _run([engine, 'logs'] + followFlag + [p.imageName], check=False)
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults="logs shown")
+
+
+class containerProc_instanceExec(cs.Cmnd):
+    """Exec a command inside the running container (default: interactive bash).
+
+    execCmd='<cmd>' runs the given command instead of bash.
+    Note: on old Podman (4.3.1), 'exec' into a rootless systemd container may
+    fail with a cgroup.procs permission error --- use SSH instead
+    (ssh -p <sshPort> bystar@localhost).
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = ['execCmd']
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        execCmd: typing.Optional[str] = None,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """engine exec -it <container> <cmd>."""
+        callParamsDict = {'execCmd': execCmd}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        p = _params()
+        engine = p.engine.value
+        cmdToRun = execCmd or 'bash'
+        _run([engine, 'exec', '-it', p.imageName, cmdToRun], check=False)
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"exec {cmdToRun}")
 
 
 ###############################################################################
 # verify
 ###############################################################################
 
-class containerProc_verify(cs.Cmnd):
-    """Smoke-test: port connectivity + noVNC HTTP + SSH-based systemd/service checks.
+class containerProc_instanceVerify(cs.Cmnd):
+    """Smoke-test the instance: port connectivity + noVNC HTTP + SSH-based systemd/service checks.
 
     For rootless-sysd: exec-free (SSH-based) — podman exec is unreliable on old Podman.
     'degraded' systemd state is WARN not FAIL (polkit is masked but may show on older images).
@@ -431,23 +612,54 @@ def _sshVerify(
     failures: list[str],
     warnings: list[str],
 ) -> None:
-    """SSH into container and run systemd/service checks."""
+    """SSH into container and run systemd/service checks.
+
+    Auth precedence (mirrors bro_dockerfiles/.../verify.sh):
+      1. sshpass -p insecure (default) --- if sshpass is on PATH.
+      2. key-based BatchMode --- if a preinstalled key is present.
+      3. no runner --- inside-container checks reported WARN, host-side stand.
+
+    Uses UserKnownHostsFile=/dev/null so container-restart host-key changes
+    do not fail SSH silently.
+    """
+    import shutil
+
     sshOpts = [
         '-o', 'StrictHostKeyChecking=no',
-        '-o', 'BatchMode=yes',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'ConnectTimeout=5',
         '-p', str(p.sshPort),
         'bystar@localhost',
     ]
 
-    def sshRun(cmd: str) -> tuple[int, str]:
-        r = subprocess.run(
-            ['ssh'] + sshOpts + [cmd],
-            capture_output=True, text=True, check=False,
-        )
-        return r.returncode, r.stdout.strip()
+    sshpassPath = shutil.which('sshpass')
+    if sshpassPath:
+        def sshRun(cmd: str) -> tuple[int, str]:
+            r = subprocess.run(
+                [sshpassPath, '-p', 'insecure', 'ssh'] + sshOpts + [cmd],
+                capture_output=True, text=True, check=False,
+            )
+            return r.returncode, r.stdout.strip()
+        sshMode = "sshpass"
+    else:
+        def sshRun(cmd: str) -> tuple[int, str]:
+            r = subprocess.run(
+                ['ssh', '-o', 'BatchMode=yes'] + sshOpts + [cmd],
+                capture_output=True, text=True, check=False,
+            )
+            return r.returncode, r.stdout.strip()
+        sshMode = "key/BatchMode"
 
-    # systemd PID 1?
+    # systemd PID 1? --- probes SSH is working. If this returns empty, downstream
+    # checks would also all be empty; skip them with a WARN + manual instruction.
     rc, out = sshRun('ps -p 1 -o comm=')
+    if rc != 0 or not out:
+        warnings.append(
+            f"SSH not automatable in {sshMode} mode "
+            f"(install sshpass, or set up a key). Manual check: "
+            f"ssh -p {p.sshPort} bystar@localhost 'systemctl is-system-running; systemctl --failed'"
+        )
+        return
     if out.strip() != 'systemd':
         failures.append(f"PID 1 is '{out}', expected systemd")
     else:
@@ -475,8 +687,8 @@ def _sshVerify(
 # status
 ###############################################################################
 
-class containerProc_status(cs.Cmnd):
-    """Show container inspect + systemd state summary."""
+class containerProc_instanceStatus(cs.Cmnd):
+    """Show instance inspect + systemd state summary."""
     cmndParamsMandatory = []
     cmndParamsOptional = []
     cmndArgsLen = {'Min': 0, 'Max': 0}
@@ -504,26 +716,40 @@ class containerProc_status(cs.Cmnd):
             capture_output=True, text=True, check=False,
         )
         if inspect.stdout.strip() == 'running':
+            import shutil as _shutil
             sshOpts = [
                 '-o', 'StrictHostKeyChecking=no',
-                '-o', 'BatchMode=yes',
+                '-o', 'UserKnownHostsFile=/dev/null',
+                '-o', 'ConnectTimeout=5',
                 '-p', str(p.sshPort),
                 'bystar@localhost',
             ]
-            subprocess.run(
-                ['ssh'] + sshOpts + ['systemctl --no-pager status vncserver@:1 novnc sshd-container'],
-                check=False,
-            )
+            sshpassPath = _shutil.which('sshpass')
+            statusCmd = 'systemctl --no-pager status vncserver@:1 novnc sshd-container'
+            if sshpassPath:
+                subprocess.run(
+                    [sshpassPath, '-p', 'insecure', 'ssh'] + sshOpts + [statusCmd],
+                    check=False,
+                )
+            else:
+                subprocess.run(
+                    ['ssh', '-o', 'BatchMode=yes'] + sshOpts + [statusCmd],
+                    check=False,
+                )
 
         return cmndOutcome.set(opError=b.op.OpError.Success, opResults="status done")
 
 
 ###############################################################################
-# clean
+# Combined
 ###############################################################################
 
-class containerProc_clean(cs.Cmnd):
-    """Remove container and image for this leaf."""
+class containerProc_fullClean(cs.Cmnd):
+    """Full clean: instanceDelete + imageDelete.
+
+    Equivalent to running containerProc_instanceDelete followed by
+    containerProc_imageDelete. Convenience for a from-scratch rebuild.
+    """
     cmndParamsMandatory = []
     cmndParamsOptional = []
     cmndArgsLen = {'Min': 0, 'Max': 0}
@@ -535,7 +761,7 @@ class containerProc_clean(cs.Cmnd):
         cmndOutcome: b.op.Outcome,
         argsList: typing.Optional[list[str]] = None,
     ) -> b.op.Outcome:
-        """Stop and remove container, then remove image."""
+        """Stop + rm instance, then rmi image."""
         callParamsDict = {}
         if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
             return b_io.eh.badOutcome(cmndOutcome)
@@ -547,7 +773,42 @@ class containerProc_clean(cs.Cmnd):
         subprocess.run([engine, 'rm', p.imageName], check=False)
         subprocess.run([engine, 'rmi', p.imageName], check=False)
 
-        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Cleaned {p.imageName}")
+        return cmndOutcome.set(opError=b.op.OpError.Success,
+                               opResults=f"fullClean: {p.imageName}")
+
+
+###############################################################################
+# Backward-compat aliases --- one release only, then remove.
+# Old Cmnd names get shims that emit a DeprecationWarning and delegate to the
+# new class. Anything that references the old names via CLI still works during
+# the transition.
+###############################################################################
+
+import warnings as _warnings
+
+
+def _deprecated(oldName: str, newCls: type) -> type:
+    """Build a Cmnd subclass that warns then delegates to newCls."""
+    class _Deprecated(newCls):  # type: ignore[valid-type,misc]
+        def cmnd(self, *a, **kw):
+            _warnings.warn(
+                f"{oldName} is deprecated; use {newCls.__name__} instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return super().cmnd(*a, **kw)
+    _Deprecated.__name__ = oldName
+    _Deprecated.__qualname__ = oldName
+    return _Deprecated
+
+
+containerProc_build      = _deprecated('containerProc_build',      containerProc_imageBuild)
+containerProc_composeUp  = _deprecated('containerProc_composeUp',  containerProc_instanceUp)
+containerProc_composeDown = _deprecated('containerProc_composeDown', containerProc_instanceDown)
+containerProc_run        = _deprecated('containerProc_run',        containerProc_instanceUp)
+containerProc_verify     = _deprecated('containerProc_verify',     containerProc_instanceVerify)
+containerProc_status     = _deprecated('containerProc_status',     containerProc_instanceStatus)
+containerProc_clean      = _deprecated('containerProc_clean',      containerProc_fullClean)
 
 
 ###############################################################################
@@ -679,29 +940,127 @@ class podmanDirectCmnds(cs.Cmnd):
 ###############################################################################
 
 def examples_csu() -> None:
+    """Examples menu, filtered by p.engine, p.profile, and p.cgroupVariants.
+
+    Reads params from the planted path so the menu shows only commands and
+    options relevant to *this* leaf: no docker-compose commands on rootless-sysd
+    leaves, no podman run on docker leaves, no cgv1 option on v2-only leaves.
+
+    If we are NOT inside a planted context (e.g. running containerProc-seed.cs
+    directly with no .spcs), falls back to the unfiltered full menu.
+    """
     od = collections.OrderedDict
     cmnd = cs.examples.cmndEnter
 
-    cs.examples.menuChapter('*containerProc — build, run, verify, compose, status, clean*')
+    # Try to read params; if not planted, show the full unfiltered menu.
+    try:
+        p = _params()
+    except (ValueError, Exception):
+        _examplesUnfiltered()
+        return
 
-    cs.examples.menuSection('Build')
-    cmnd('containerProc_build', comment="# build with layer cache")
-    cmnd('containerProc_build', pars=od([('noCache', 'true')]), comment="# --no-cache build")
+    isDocker = (p.engine == containerProc_seedInfo.Engine.Docker)
+    isPodman = (p.engine == containerProc_seedInfo.Engine.Podman)
+    supportsV1 = (containerProc_seedInfo.CgroupVer.V1 in p.cgroupVariants)
 
-    cs.examples.menuSection('Docker compose (confined / privileged)')
-    cmnd('containerProc_composeUp', comment="# cgroup v2 host")
-    cmnd('containerProc_composeUp', pars=od([('cgroupVer', 'v1')]), comment="# cgroup v1 host")
-    cmnd('containerProc_composeDown')
+    cs.examples.menuChapter(
+        f'*containerProc for {p.imageName}* '
+        f'(engine={p.engine.value}, profile={p.profile.value})'
+    )
 
-    cs.examples.menuSection('Podman run (rootless-sysd)')
-    cmnd('containerProc_run', pars=od([('detach', 'true')]), comment="# detached")
+    # -----------------------------------------------------------------
+    # Image section
+    # -----------------------------------------------------------------
+    cs.examples.menuSection('Image')
+    cmnd('containerProc_imageBuild', comment="# build with layer cache")
+    cmnd('containerProc_imageBuild', pars=od([('noCache', 'true')]),
+         comment="# --no-cache build")
+    cmnd('containerProc_imageDelete', comment="# rmi (image only)")
 
-    cs.examples.menuSection('Verify')
-    cmnd('containerProc_verify')
+    # -----------------------------------------------------------------
+    # Instance section --- engine-specific
+    # -----------------------------------------------------------------
+    cs.examples.menuSection('Instance')
 
-    cs.examples.menuSection('Status / Clean')
-    cmnd('containerProc_status')
-    cmnd('containerProc_clean')
+    if isDocker:
+        cmnd('containerProc_instanceUp', comment="# docker compose up -d (cgroup v2)")
+        if supportsV1:
+            cmnd('containerProc_instanceUp', pars=od([('cgroupVer', 'v1')]),
+                 comment="# cgroup v1 host: uses docker-compose.cgv1.yml")
+        cmnd('containerProc_instanceDown', comment="# docker compose down")
+        if supportsV1:
+            cmnd('containerProc_instanceDown', pars=od([('cgroupVer', 'v1')]),
+                 comment="# cgroup v1 host")
+    elif isPodman:
+        cmnd('containerProc_instanceUp', pars=od([('detach', 'true')]),
+             comment="# podman run --systemd=always -d")
+        cmnd('containerProc_instanceDown', comment="# podman stop")
+
+    cmnd('containerProc_instanceRestart')
+    cmnd('containerProc_instancePs', comment="# ps -a filtered to this leaf")
+    cmnd('containerProc_instanceLogs')
+    cmnd('containerProc_instanceLogs', pars=od([('follow', 'true')]),
+         comment="# follow (tail -f)")
+    cmnd('containerProc_instanceExec', comment="# interactive bash")
+    if isPodman:
+        # Rootless-sysd exec-into is unreliable on old Podman; SSH is preferred
+        cs.examples.execInsert(
+            f"ssh -p {p.sshPort} bystar@localhost   # preferred for rootless-sysd"
+        )
+    cmnd('containerProc_instanceDelete', comment="# stop + rm instance (keeps image)")
+    if isDocker and supportsV1:
+        cmnd('containerProc_instanceDelete', pars=od([('cgroupVer', 'v1')]),
+             comment="# cgroup v1 host")
+
+    # -----------------------------------------------------------------
+    # Verify + Status
+    # -----------------------------------------------------------------
+    cs.examples.menuSection('Verify + Status')
+    cmnd('containerProc_instanceVerify')
+    cmnd('containerProc_instanceStatus')
+
+    # -----------------------------------------------------------------
+    # Full clean
+    # -----------------------------------------------------------------
+    cs.examples.menuSection('Combined')
+    cmnd('containerProc_fullClean',
+         comment="# = instanceDelete + imageDelete")
+
+
+def _examplesUnfiltered() -> None:
+    """Full unfiltered menu, shown when there is no planted context.
+
+    Used e.g. when someone runs containerProc-seed.cs directly to browse
+    available commands without a leaf.
+    """
+    od = collections.OrderedDict
+    cmnd = cs.examples.cmndEnter
+
+    cs.examples.menuChapter('*containerProc --- full command surface (no leaf context)*')
+
+    cs.examples.menuSection('Image')
+    cmnd('containerProc_imageBuild')
+    cmnd('containerProc_imageBuild', pars=od([('noCache', 'true')]))
+    cmnd('containerProc_imageDelete')
+
+    cs.examples.menuSection('Instance')
+    cmnd('containerProc_instanceUp')
+    cmnd('containerProc_instanceUp', pars=od([('cgroupVer', 'v1')]))
+    cmnd('containerProc_instanceUp', pars=od([('detach', 'true')]))
+    cmnd('containerProc_instanceDown')
+    cmnd('containerProc_instanceRestart')
+    cmnd('containerProc_instancePs')
+    cmnd('containerProc_instanceLogs')
+    cmnd('containerProc_instanceLogs', pars=od([('follow', 'true')]))
+    cmnd('containerProc_instanceExec')
+    cmnd('containerProc_instanceDelete')
+
+    cs.examples.menuSection('Verify + Status')
+    cmnd('containerProc_instanceVerify')
+    cmnd('containerProc_instanceStatus')
+
+    cs.examples.menuSection('Combined')
+    cmnd('containerProc_fullClean')
 
 
 ###############################################################################

@@ -205,7 +205,7 @@ then read the figure.
   - [[#installation-with-pipx][Installation With pipx]]
 - [[#usage][Usage]]
   - [[#planting-a-spcs-file-in-a-leaf-directory][Planting a =.spcs= File in a Leaf Directory]]
-  - [[#the-seed-commands-build--composeup--run--verify--status--clean][The Seed Commands: build / composeUp / run / verify / status / clean]]
+  - [[#the-seed-commands-image-instance-verifystatus-combined][The Seed Commands: image, instance, verify+status, combined]]
   - [[#host-readiness-check-podmanhostverifycs][Host Readiness Check: =podmanHostVerify.cs=]]
   - [[#docker--podman-installation-via--sbompcs-files][Docker / Podman Installation via =-sbom.pcs= Files]]
   - [[#cheat-sheet-dockercmndscs--podmancmndscs][Cheat Sheet: =dockerCmnds.cs= / =podmanCmnds.cs=]]
@@ -398,58 +398,89 @@ chmod +x dockerProc.spcs   # or podmanProc.spcs
 The leaf's path (=debian/<release>/<profile>/vnc/xfce/<imageName>/=)
 supplies all parameters.
 
-** The Seed Commands: build / composeUp / run / verify / status / clean
+** The Seed Commands: image, instance, verify+status, combined
 
 From any planted leaf, run the =.spcs= file with no arguments to see the
-menu of common invocations:
+menu of common invocations --- filtered to just the commands relevant to
+that leaf (docker leaves don't show podman-only options, and vice versa).
 
 #+begin_src bash
 cd /bisos/git/bxRepos/bxObjects/bro_dockerfiles/debian/13/privileged/vnc/xfce/bisos_deb13-sysd
 ./dockerProc.spcs
 #+end_src
 
-The available commands:
+The Cmnd surface uses two noun prefixes --- =image*= for commands that
+operate on the container image, and =instance*= for commands that operate
+on the running (or stopped) container instance. Plus a =full*= combined
+command.
 
-| Command     | Purpose                                                                   |
-|-------------+---------------------------------------------------------------------------|
-| =build=       | =docker build= or =podman build=. =--noCache="true"= for clean build.           |
-| =composeUp=   | =docker compose up -d= (docker only). =--cgroupVer="v1"= for cgroup-v1 host.  |
-| =composeDown= | =docker compose down=. Same =cgroupVer= handling as =composeUp=.                |
-| =run=         | =podman run --systemd=always= (rootless-sysd only). =--detach="true"= for bg. |
-| =verify=      | Host-side smoke test: port + noVNC HTTP + SSH-based systemd checks.       |
-| =status=      | Engine inspect + SSH systemd status.                                      |
-| =clean=       | Stop + remove container, remove image.                                    |
+*Image commands (image = the built artefact):*
+
+| Command                       | Purpose                                                     |
+|-------------------------------+-------------------------------------------------------------|
+| =containerProc_imageBuild=    | =docker build= or =podman build=. =--noCache="true"= for clean build. |
+| =containerProc_imageDelete=   | =rmi= (image only; does NOT touch instances).               |
+
+*Instance commands (instance = a container built from the image):*
+
+| Command                         | Purpose                                                                    |
+|---------------------------------+----------------------------------------------------------------------------|
+| =containerProc_instanceUp=      | Docker: =docker compose up -d=. Podman: =podman run --systemd=always=.     |
+| =containerProc_instanceDown=    | Docker: =docker compose down=. Podman: =podman stop= (does NOT rm).        |
+| =containerProc_instanceDelete=  | Stop + remove instance (image preserved).                                  |
+| =containerProc_instanceRestart= | Stop + start in place (state preserved).                                   |
+| =containerProc_instancePs=      | =ps -a= filtered to this leaf's container name.                            |
+| =containerProc_instanceLogs=    | =logs= (=--follow="true"= to stream).                                      |
+| =containerProc_instanceExec=    | =exec -it <container> bash= (or =--execCmd=...= for other command).        |
+
+*Verify + status:*
+
+| Command                        | Purpose                                                       |
+|--------------------------------+---------------------------------------------------------------|
+| =containerProc_instanceVerify= | Host-side smoke test: port + noVNC HTTP + SSH-based systemd checks. |
+| =containerProc_instanceStatus= | Engine inspect + SSH systemd status.                          |
+
+*Combined:*
+
+| Command                     | Purpose                                                          |
+|-----------------------------+------------------------------------------------------------------|
+| =containerProc_fullClean=   | =instanceDelete= + =imageDelete= (from-scratch rebuild).         |
 
 Additional notes:
 
-- =build= on a rootless-sysd leaf auto-builds the confined base image if
-  it is missing from podman's store.
-- =verify= is *exec-free* for rootless (uses SSH instead of =podman exec=,
-  which is unreliable on old Podman for systemd containers).
+- =imageBuild= on a rootless-sysd leaf auto-builds the confined base image
+  if it is missing from podman's store.
+- =instanceVerify= is *exec-free* for rootless (uses SSH instead of
+  =podman exec=, which is unreliable on old Podman for systemd containers).
+- For docker leaves, =--cgroupVer="v1"= selects =docker-compose.cgv1.yml=
+  when the host is on cgroup v1.
+- The old flat names (=build=, =composeUp=, =composeDown=, =run=, =verify=,
+  =status=, =clean=) are kept as deprecated aliases for one release ---
+  they still work but emit a =DeprecationWarning=.
 
 Example --- build and start the deb13 privileged image on a cgroup-v2 host:
 
 #+begin_src bash
 cd /bisos/git/bxRepos/bxObjects/bro_dockerfiles/debian/13/privileged/vnc/xfce/bisos_deb13-sysd
-./dockerProc.spcs -i build
-./dockerProc.spcs -i composeUp
-./dockerProc.spcs -i verify
+./dockerProc.spcs -i containerProc_imageBuild
+./dockerProc.spcs -i containerProc_instanceUp
+./dockerProc.spcs -i containerProc_instanceVerify
 #+end_src
 
-On a cgroup-v1 host (e.g. RHEL 8), pass =cgroupVer=v1= to compose:
+On a cgroup-v1 host (e.g. RHEL 8), pass =cgroupVer=v1= to instance up/down:
 
 #+begin_src bash
-./dockerProc.spcs -i composeUp   --cgroupVer="v1"
-./dockerProc.spcs -i composeDown --cgroupVer="v1"
+./dockerProc.spcs -i containerProc_instanceUp   --cgroupVer="v1"
+./dockerProc.spcs -i containerProc_instanceDown --cgroupVer="v1"
 #+end_src
 
 For rootless-sysd (podman) leaves:
 
 #+begin_src bash
 cd /bisos/git/bxRepos/bxObjects/bro_dockerfiles/debian/13/rootless-sysd/vnc/xfce/bisos_deb13-rootless-sysd
-./podmanProc.spcs -i build
-./podmanProc.spcs -i run --detach="true"
-./podmanProc.spcs -i verify
+./podmanProc.spcs -i containerProc_imageBuild
+./podmanProc.spcs -i containerProc_instanceUp --detach="true"
+./podmanProc.spcs -i containerProc_instanceVerify
 #+end_src
 
 ** Host Readiness Check: =podmanHostVerify.cs=
@@ -510,7 +541,7 @@ An overview of the relevant files of the bisos.dockerProc package:
 - =py3/bin/dockerCmnds.cs= / =py3/bin/podmanCmnds.cs= --- cheat-sheet CS (symlinked).
 - =py3/bisos/dockerProc/containerProc_seedInfo.py= --- =Engine=/=Profile=/=CgroupVer= enums, =ContainerParams= dataclass, =paramsFromPlantPath()= pure function.
 - =py3/bisos/dockerProc/containerProc_seed.py= --- atexit registration.
-- =py3/bisos/dockerProc/containerProc_csu.py= --- CS command implementations (=containerProc_build=, =containerProc_composeUp=, ...).
+- =py3/bisos/dockerProc/containerProc_csu.py= --- CS command implementations. Cmnds are organized by noun: =containerProc_image*= (build/delete), =containerProc_instance*= (up/down/delete/restart/ps/logs/exec/verify/status), and =containerProc_fullClean= (combined).
 - =py3/images/containerProc-graphviz.pcs= --- source for the "Full Design at a Glance" figure.
 - =py3/setup.py=, =py3/pypiProc.sh= --- PyPI packaging (setup.py is dblock-driven; do not hand-edit).
 

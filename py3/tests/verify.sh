@@ -19,6 +19,37 @@ lpDo ../bin/containerProc-seed.cs
 
 lpDo ../bin/podmanHostVerify.cs -i verify
 
+# --- containerProc_csu Cmnds: import + class presence smoke test ---
+
+lpDo python3 -c "
+from bisos.dockerProc import containerProc_csu as m
+newCmnds = [
+    'containerProc_imageBuild', 'containerProc_imageDelete',
+    'containerProc_instanceUp', 'containerProc_instanceDown',
+    'containerProc_instanceDelete', 'containerProc_instanceRestart',
+    'containerProc_instancePs', 'containerProc_instanceLogs',
+    'containerProc_instanceExec', 'containerProc_instanceVerify',
+    'containerProc_instanceStatus', 'containerProc_fullClean',
+]
+oldAliases = [
+    'containerProc_build', 'containerProc_composeUp', 'containerProc_composeDown',
+    'containerProc_run', 'containerProc_verify', 'containerProc_status',
+    'containerProc_clean',
+]
+failed = 0
+for n in newCmnds:
+    if not hasattr(m, n): print(f'  [FAIL] missing new Cmnd: {n}'); failed += 1
+    else: print(f'  [PASS] new Cmnd present: {n}')
+for n in oldAliases:
+    if not hasattr(m, n): print(f'  [FAIL] missing deprecated alias: {n}'); failed += 1
+    else: print(f'  [PASS] deprecated alias present: {n}')
+if not hasattr(m, 'commonParamsSpecify'):
+    print('  [FAIL] commonParamsSpecify missing'); failed += 1
+else:
+    print('  [PASS] commonParamsSpecify present')
+import sys; sys.exit(failed)
+"
+
 # --- paramsFromPlantPath(): pure-Python path parsing for all six leaves ---
 
 lpDo python3 -c "
