@@ -221,7 +221,7 @@ class dockerDirectCmnds(cs.Cmnd):
         if b.subProc.Op(outcome=cmndOutcome, log=0).bash(
                 f"""docker ps -q | head -1""",
         ).isProblematic():  return(b_io.eh.badOutcome(cmndOutcome))
-        oneContainerId = cmndOutcome.stdout.strip()
+        oneContainerId = cmndOutcome.stdout.strip() or "<containerId>"
 
         cs.examples.menuChapter('=Direct Docker Interface Commands=')
 
@@ -259,9 +259,36 @@ class dockerDirectCmnds(cs.Cmnd):
         literal("docker images -f dangling=true -q # -q provides only image ids")
         literal("docker rmi $(docker images -f dangling=true -q) # Remove dangling images")
 
-        cs.examples.menuSection('/Docker Run Interface -- Status And Information/')
+        cs.examples.menuSection('/Docker Run Interface -- Start A Container/')
 
-        literal("docker run -d -p 8080:6080 -p 5901:5901 --name my-gnome-desktop debian-gnome-novnc")
+        # -d: detached (background). Returns the container ID immediately.
+        # -p <host>:<container>: publish a port. Repeatable.
+        # --name mycontainer: stable name for later stop/start/rm/exec/logs
+        #   reference (default is auto-generated two-word name).
+        # bisos-image: image to instantiate (positional, after all flags).
+        # Note: ports below are illustrative -- adjust host-side to match your image.
+        literal("docker run -d -p 6901:6901 -p 5901:5901 -p 2222:22 --name mycontainer bisos-image")
+
+        cs.examples.menuSection('/Docker Container Lifecycle -- stop, start, restart/')
+
+        # docker stop: SIGTERM, wait <timeout>s, then SIGKILL. Preferred over kill.
+        #   For systemd (privileged) containers use -t 30+ to let systemd shut down services.
+        literal("docker stop mycontainer          # graceful stop (SIGTERM, 10s grace, then SIGKILL)")
+        literal("docker stop -t 30 mycontainer   # longer grace for systemd containers")
+        literal("docker kill mycontainer          # immediate SIGKILL -- avoid for systemd containers")
+        # Container still exists after stop; start restarts it in place with the same config.
+        literal("docker start mycontainer         # restart a stopped container (keeps state)")
+        literal("docker restart mycontainer       # stop then start")
+        literal("docker ps          # running containers only")
+        literal("docker ps -a       # all containers including stopped")
+
+        cs.examples.menuSection('/Docker Container Removal/')
+
+        # A stopped container still exists on disk (config + writable layer). rm deletes it.
+        # rm requires the container to be stopped first, unless -f is passed.
+        literal("docker rm mycontainer       # remove a stopped container")
+        literal("docker rm -f mycontainer    # force-remove even if running (stops + rm in one step)")
+        literal("docker container prune     # remove all stopped containers (interactive)")
 
         cs.examples.menuSection('/Doocker Compose Interface/')
 
@@ -278,6 +305,13 @@ class dockerDirectCmnds(cs.Cmnd):
         cs.examples.menuSection('/Docker:: Execute a command in a running container/')
 
         literal("docker exec --help")
+        literal("docker exec -it mycontainer bash")
+
+        cs.examples.menuSection('/Docker Logs and Inspect/')
+
+        literal("docker logs mycontainer         # print stdout/stderr of container")
+        literal("docker logs -f mycontainer      # follow (like tail -f)")
+        literal("docker inspect mycontainer      # full JSON: image, mounts, network, state")
 
         cs.examples.menuSection('/Docker Cleanups/')
 

@@ -538,7 +538,7 @@ class podmanDirectCmnds(cs.Cmnd):
                 "podman ps -q | head -1",
         ).isProblematic():
             return b_io.eh.badOutcome(cmndOutcome)
-        oneContainerId = cmndOutcome.stdout.strip()
+        oneContainerId = cmndOutcome.stdout.strip() or "<containerId>"
 
         cs.examples.menuChapter('=Direct Podman Interface Commands=')
 
@@ -571,12 +571,47 @@ class podmanDirectCmnds(cs.Cmnd):
         literal("podman rmi $(podman images -f dangling=true -q)  # Remove dangling images")
 
         cs.examples.menuSection('/Podman Run Interface/')
-        literal("podman run --systemd=always -d --name mycontainer bisos-image  # rootless-sysd")
-        literal("podman run -d -p 8080:6080 -p 5901:5901 --name mycontainer bisos-image")
+        # --systemd=always: configure the container for systemd as PID 1
+        #   (tmpfs on /run, /run/lock, /tmp, /var/log/journal; cgroup delegation).
+        # -d: detached (background). Returns the container ID immediately.
+        # --name mycontainer: stable name for later stop/start/rm/exec/logs
+        #   reference (default is auto-generated two-word name).
+        # bisos-image: the image to instantiate (positional, after all flags).
+        literal("podman run --systemd=always -d --name mycontainer bisos-image  # rootless-sysd (systemd PID 1)")
+        # No --systemd=always: use only for non-systemd (confined) images.
+        # -p <host>:<container>: publish a port. Repeatable.
+        # Note: ports below are illustrative — bisos_deb*-fresh uses 6901/5901 on both sides.
+        literal("podman run -d -p 6901:6901 -p 5901:5901 -p 2222:22 --name mycontainer bisos-image  # confined (no systemd)")
+
+        cs.examples.menuSection('/Podman Container Lifecycle -- stop, start, restart/')
+        # podman stop: send SIGTERM, wait <timeout>s, then SIGKILL. Preferred over kill.
+        #   Rootless-sysd containers: use --time=10 or more; systemd needs time to shut down services.
+        literal(f"podman stop {oneContainerId}  # graceful stop (SIGTERM, 10s grace, then SIGKILL)")
+        literal(f"podman stop --time=30 {oneContainerId}  # longer grace for systemd containers")
+        literal(f"podman kill {oneContainerId}  # immediate SIGKILL -- avoid for systemd containers")
+        # Container still exists after stop; start restarts it in place with the same config.
+        literal(f"podman start {oneContainerId}  # restart a stopped container (keeps state)")
+        literal(f"podman restart {oneContainerId}  # stop then start")
+        # podman ps -a shows stopped containers too (bare 'ps' shows only running).
+        literal("podman ps          # running containers only")
+        literal("podman ps -a       # all containers including stopped")
+
+        cs.examples.menuSection('/Podman Container Removal/')
+        # A stopped container still exists on disk (config + layer diff). rm deletes it.
+        # rm requires the container to be stopped first, unless -f is passed.
+        literal(f"podman rm {oneContainerId}       # remove a stopped container")
+        literal(f"podman rm -f {oneContainerId}    # force-remove even if running (stops + rm in one step)")
+        literal("podman rm -a       # remove all stopped containers")
+        literal("podman container prune  # remove all stopped containers (interactive)")
 
         cs.examples.menuSection('/Podman Exec/')
         literal("podman exec --help")
         literal(f"podman exec -it {oneContainerId} bash")
+
+        cs.examples.menuSection('/Podman Logs and Inspect/')
+        literal(f"podman logs {oneContainerId}         # print stdout/stderr of container")
+        literal(f"podman logs -f {oneContainerId}      # follow (like tail -f)")
+        literal(f"podman inspect {oneContainerId}      # full JSON: image, mounts, network, state")
 
         cs.examples.menuSection('/Podman Cleanups/')
         literal("podman image prune -a -f  # Remove all unused images -- forced")
