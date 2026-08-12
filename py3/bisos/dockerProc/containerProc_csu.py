@@ -96,6 +96,54 @@ def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
 
 
 ###############################################################################
+# commonParamsSpecify --- registers CS parameters used by the containerProc_*
+# commands with the PyCS argparse layer. Without this, --noCache / --cgroupVer /
+# --detach / --localBuild are rejected as "unrecognized arguments" even though
+# the Cmnd classes declare them in cmndParamsOptional.
+###############################################################################
+
+def commonParamsSpecify(
+        csParams: cs.param.CmndParamDict,
+) -> None:
+    csParams.parDictAdd(
+        parName='localBuild',
+        parDescription="Local-only build (no push). Truthy string like 'true'.",
+        parDataType=None,
+        parDefault=None,
+        parChoices=["any"],
+        argparseShortOpt=None,
+        argparseLongOpt='--localBuild',
+    )
+    csParams.parDictAdd(
+        parName='noCache',
+        parDescription="Pass --no-cache to the engine build. Truthy string like 'true'.",
+        parDataType=None,
+        parDefault=None,
+        parChoices=["any"],
+        argparseShortOpt=None,
+        argparseLongOpt='--noCache',
+    )
+    csParams.parDictAdd(
+        parName='cgroupVer',
+        parDescription="Host cgroup version selector for docker compose: 'v1' or 'v2'.",
+        parDataType=None,
+        parDefault=None,
+        parChoices=["v1", "v2"],
+        argparseShortOpt=None,
+        argparseLongOpt='--cgroupVer',
+    )
+    csParams.parDictAdd(
+        parName='detach',
+        parDescription="Run podman container detached (background). Truthy string like 'true'.",
+        parDataType=None,
+        parDefault=None,
+        parChoices=["any"],
+        argparseShortOpt=None,
+        argparseLongOpt='--detach',
+    )
+
+
+###############################################################################
 # build
 ###############################################################################
 
