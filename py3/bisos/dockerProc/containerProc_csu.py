@@ -778,6 +778,163 @@ class containerProc_fullClean(cs.Cmnd):
 
 
 ###############################################################################
+# Backup / Snapshot helpers
+###############################################################################
+
+def _backupsDir(p: containerProc_seedInfo.ContainerParams) -> pathlib.Path:
+    """BISOS-convention backup directory for the planted leaf.
+
+    Path: /bisos/var/dockerProc/backups/<user>/<imageName>/
+
+    Ensures the directory exists and drops two symlinks the first time it's
+    called (idempotent):
+
+      <leafDir>/backups          → /bisos/var/dockerProc/backups/<user>/<imageName>/
+      /bisos/var/.../leaf        → <leafDir>/
+    """
+    import getpass
+    user = getpass.getuser()
+    backupsDir = pathlib.Path("/bisos/var/dockerProc/backups") / user / p.imageName
+    backupsDir.mkdir(parents=True, exist_ok=True)
+
+    leafDir = pathlib.Path(p.plantPath).parent
+
+    # leaf -> backups
+    leafBackupsLink = leafDir / "backups"
+    if not leafBackupsLink.exists() and not leafBackupsLink.is_symlink():
+        try:
+            leafBackupsLink.symlink_to(backupsDir)
+        except OSError as exc:
+            b_io.ann.write(f"warn: could not create {leafBackupsLink} -> {backupsDir}: {exc}")
+
+    # backups -> leaf
+    backupsLeafLink = backupsDir / "leaf"
+    if not backupsLeafLink.exists() and not backupsLeafLink.is_symlink():
+        try:
+            backupsLeafLink.symlink_to(leafDir)
+        except OSError as exc:
+            b_io.ann.write(f"warn: could not create {backupsLeafLink} -> {leafDir}: {exc}")
+
+    return backupsDir
+
+
+###############################################################################
+# containerProc_instanceCommit --- snapshot the running container to a new image tag.
+#
+# Scenario A ("Checkpoint my experimental container"). Commits the running
+# instance's writable layer as a new image, tagged <imageName>:snapshot-<timestamp>
+# (or a user-supplied tag). Does NOT capture volumes.
+###############################################################################
+
+class containerProc_instanceCommit(cs.Cmnd):
+    """Snapshot the running instance to a new image tag (docker commit / podman commit).
+
+    Captures the writable layer only. Does NOT capture volumes.
+    Default tag is <imageName>:snapshot-<YYYYmmdd-HHMMSS>; override with --tag=.
+
+    Optional --message= and --author= populate commit metadata.
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = ['tag', 'message', 'author']
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        tag: typing.Optional[str] = None,
+        message: typing.Optional[str] = None,
+        author: typing.Optional[str] = None,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """engine commit <container> <imageName>:<tag>"""
+        callParamsDict = {'tag': tag, 'message': message, 'author': author}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        import datetime
+
+        p = _params()
+        engine = p.engine.value
+
+        if tag is None:
+            tag = f"snapshot-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+        targetTag = f"{p.imageName}:{tag}"
+
+        cmd = [engine, 'commit']
+        if message:
+            cmd += ['-m', message]
+        if author:
+            cmd += ['-a', author]
+        # Container name is the same as the leaf's imageName (BISOS convention: one instance per leaf).
+        cmd += [p.imageName, targetTag]
+
+        _run(cmd)
+        b_io.ann.write(f"committed {p.imageName} -> {targetTag}")
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=targetTag)
+
+
+###############################################################################
+# containerProc_imageSave --- portable export of an image to a tarball.
+#
+# Scenario B ("Transfer this image to another host"). Saves the image (default:
+# <imageName>:latest, or --tag= to save a specific tag such as a commit
+# snapshot) to a tarball under /bisos/var/dockerProc/backups/<user>/<imageName>/.
+###############################################################################
+
+class containerProc_imageSave(cs.Cmnd):
+    """Save the image to a portable tarball (docker save / podman save).
+
+    Default source: the leaf's <imageName>:latest. Override with --tag= to
+    save a specific tag (e.g. a commit snapshot).
+
+    Default output path:
+        /bisos/var/dockerProc/backups/<user>/<imageName>/<imageName>-<tag>-<timestamp>.tar
+    Override with --outPath=. First invocation creates the backup directory
+    and lays down symlinks between the backup dir and the leaf.
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = ['tag', 'outPath']
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        tag: typing.Optional[str] = None,
+        outPath: typing.Optional[str] = None,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """engine save <image>:<tag> -o <outPath>"""
+        callParamsDict = {'tag': tag, 'outPath': outPath}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        import datetime
+
+        p = _params()
+        engine = p.engine.value
+
+        srcTag = tag if tag else "latest"
+        srcImage = f"{p.imageName}:{srcTag}"
+
+        if outPath is None:
+            backupsDir = _backupsDir(p)
+            timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+            outFile = backupsDir / f"{p.imageName}-{srcTag}-{timestamp}.tar"
+        else:
+            outFile = pathlib.Path(outPath).expanduser().resolve()
+            outFile.parent.mkdir(parents=True, exist_ok=True)
+
+        _run([engine, 'save', srcImage, '-o', str(outFile)])
+        b_io.ann.write(f"saved {srcImage} -> {outFile}")
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=str(outFile))
+
+
+###############################################################################
 # Backward-compat aliases --- one release only, then remove.
 # Old Cmnd names get shims that emit a DeprecationWarning and delegate to the
 # new class. Anything that references the old names via CLI still works during
@@ -922,6 +1079,35 @@ class podmanDirectCmnds(cs.Cmnd):
         literal(f"podman logs -f {oneContainerId}      # follow (like tail -f)")
         literal(f"podman inspect {oneContainerId}      # full JSON: image, mounts, network, state")
 
+        cs.examples.menuSection('/Podman Backup + Restore --- commit, save/load, export/import, volume backup/')
+        literal("# See Blee panel: /bisos/panels/bisos-core/virtualization/docker/backupAndRestore/")
+        literal("# ")
+        literal("# Commit --- snapshot a running container's writable layer as a new image layer.")
+        literal("# Does NOT capture volumes. Use for one-off checkpoints, not reproducible builds.")
+        literal(f"podman commit {oneContainerId} myimage:snapshot-$(date +%Y%m%d)")
+        literal(f"podman commit -m 'checkpoint' -a 'me <me@ex>' {oneContainerId} myimage:snapshot")
+        literal("# ")
+        literal("# Image save + load --- portable image transfer (all layers, metadata).")
+        literal("# RECOMMENDED for image transfer between hosts.")
+        literal(f"podman save {oneImageId} -o /bisos/var/dockerProc/backups/${{USER}}/<imageName>/<imageName>-$(date +%Y%m%d-%H%M%S).tar")
+        literal(f"podman save --format oci-archive {oneImageId} -o backup.oci  # OCI format alternative")
+        literal("podman load -i backup.tar                         # restore on receiving host")
+        literal("# ")
+        literal("# Container export + import --- flat filesystem, no layer history.")
+        literal(f"podman export {oneContainerId} -o fs.tar")
+        literal("podman import fs.tar newimage:imported")
+        literal("# ")
+        literal("# Volume backup --- podman has a native command as well.")
+        literal("podman volume ls")
+        literal("podman volume export myvol -o myvol.tar             # native, preferred")
+        literal("podman volume import myvol myvol.tar                # native restore")
+        literal("# Or the helper-container idiom (works with both docker and podman):")
+        literal("podman run --rm -v myvol:/data -v $(pwd):/backup alpine tar czf /backup/myvol.tgz /data")
+        literal("# ")
+        literal("# BISOS convention: backup tarballs live at")
+        literal("#   /bisos/var/dockerProc/backups/<user>/<imageName>/<imageName>-<timestamp>.tar")
+        literal("# The containerProc_imageSave Cmnd (see .spcs -i examples) automates this path.")
+
         cs.examples.menuSection('/Podman Cleanups/')
         literal("podman image prune -a -f  # Remove all unused images -- forced")
         literal("podman system prune  # DANGER: Prune entire Podman system")
@@ -1018,6 +1204,31 @@ def examples_csu() -> None:
     cs.examples.menuSection('Verify + Status')
     cmnd('containerProc_instanceVerify')
     cmnd('containerProc_instanceStatus')
+
+    # -----------------------------------------------------------------
+    # Backup / Snapshot --- Scenarios A + B (see docker/backupAndRestore Blee panel)
+    # -----------------------------------------------------------------
+    cs.examples.menuSection('Backup / Snapshot')
+    cmnd('containerProc_instanceCommit',
+         comment=f"# snapshot the running {p.imageName} -> {p.imageName}:snapshot-<timestamp>")
+    cmnd('containerProc_instanceCommit',
+         pars=od([('tag', 'checkpoint')]),
+         comment="# ... with an explicit tag")
+    cmnd('containerProc_instanceCommit',
+         pars=od([('tag', 'checkpoint'), ('message', 'before X'), ('author', 'me <me@ex>')]),
+         comment="# ... with commit metadata")
+    cmnd('containerProc_imageSave',
+         comment=f"# save {p.imageName}:latest -> /bisos/var/dockerProc/backups/<user>/{p.imageName}/")
+    cmnd('containerProc_imageSave',
+         pars=od([('tag', 'snapshot-20260813-120000')]),
+         comment="# save a specific tag (e.g. a prior commit snapshot)")
+    cmnd('containerProc_imageSave',
+         pars=od([('outPath', '/tmp/my-backup.tar')]),
+         comment="# override the default backup path")
+    cs.examples.execInsert(
+        f"{p.engine.value} load -i /bisos/var/dockerProc/backups/$USER/{p.imageName}/{p.imageName}-latest-<timestamp>.tar"
+        f"   # restore on this or another host (plain {p.engine.value} load)"
+    )
 
     # -----------------------------------------------------------------
     # Full clean

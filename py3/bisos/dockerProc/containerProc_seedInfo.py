@@ -248,6 +248,128 @@ def setup(
 
 
 ###############################################################################
+# leafProcessorNames --- filenames whose presence in a directory indicates
+# that the directory is a *leaf* in a walkable FTO tree.
+#
+# The branch's .spcs passes this list to
+# ftoBranch_seedInfo.setup(leafProcessors=...) so the walker can detect
+# leaves definitionally (by presence of the leaf's own planted .spcs)
+# instead of requiring a per-leaf =_tree_=leaf= marker file.
+###############################################################################
+
+def leafProcessorNames() -> list[str]:
+    """Filenames that identify a containerProc leaf directory.
+
+    A directory is a leaf if it contains any of these files. The =_treeProc_=
+    for that leaf is the matched filename itself.
+    """
+    return ['dockerProc.spcs', 'podmanProc.spcs']
+
+
+###############################################################################
+# walkExamples --- the list of containerProc verbs that make sense to run
+# across a branch of leaves via fto_forwardToLeaves.
+#
+# This is the "source of truth" for what a branch .spcs (e.g. one planted
+# at bro_dockerfiles/debian/12/confined/) should expose in its walk-examples
+# menu chapter. The branch .spcs imports this function and passes the result
+# to bisos.fileObj.ftoBranch_seedInfo.setup(leafExamples=...).
+#
+# Adding a new containerProc_* Cmnd? Add it here once; every branch under
+# bro_dockerfiles automatically picks it up on the next examples-menu render.
+###############################################################################
+
+def walkExamples() -> list:
+    """Return the list of WalkExampleSpec entries for containerProc leaves.
+
+    Import type lazily to avoid a hard dependency on =bisos.fileObj= at
+    module-load time (the seedInfo is used in contexts without fileObj too).
+    """
+    from bisos.fileObj.ftoBranch_seedInfo import WalkExampleSpec
+
+    # Ordered by lifecycle stage. Tags allow future filtering
+    # (e.g. read-only vs destructive).
+    return [
+        # -- Read-only (safe to walk everywhere) ------------------------------
+        WalkExampleSpec(
+            cmndName='containerProc_instancePs',
+            comment="# engine ps -a filtered to each leaf's container",
+            tags=frozenset({'read-only'}),
+        ),
+        WalkExampleSpec(
+            cmndName='containerProc_instanceStatus',
+            comment="# engine inspect + SSH systemd summary",
+            tags=frozenset({'read-only'}),
+        ),
+        WalkExampleSpec(
+            cmndName='containerProc_instanceLogs',
+            comment="# engine logs at each leaf",
+            tags=frozenset({'read-only'}),
+        ),
+        WalkExampleSpec(
+            cmndName='containerProc_instanceVerify',
+            comment="# port + noVNC + SSH-based service checks at each leaf",
+            tags=frozenset({'read-only'}),
+        ),
+        # -- Image lifecycle --------------------------------------------------
+        WalkExampleSpec(
+            cmndName='containerProc_imageBuild',
+            comment="# build every leaf's image (long-running)",
+            tags=frozenset({'destructive', 'build'}),
+        ),
+        WalkExampleSpec(
+            cmndName='containerProc_imageBuild',
+            pars={'noCache': 'true'},
+            comment="# --no-cache build",
+            tags=frozenset({'destructive', 'build'}),
+        ),
+        WalkExampleSpec(
+            cmndName='containerProc_imageDelete',
+            comment="# rmi every leaf's image (leaves instances alone)",
+            tags=frozenset({'destructive'}),
+        ),
+        # -- Instance lifecycle -----------------------------------------------
+        WalkExampleSpec(
+            cmndName='containerProc_instanceUp',
+            comment="# up (docker compose up / podman run --systemd=always)",
+            tags=frozenset({'destructive'}),
+        ),
+        WalkExampleSpec(
+            cmndName='containerProc_instanceDown',
+            comment="# down / stop",
+            tags=frozenset({'destructive'}),
+        ),
+        WalkExampleSpec(
+            cmndName='containerProc_instanceRestart',
+            comment="# stop + start",
+            tags=frozenset({'destructive'}),
+        ),
+        WalkExampleSpec(
+            cmndName='containerProc_instanceDelete',
+            comment="# stop + rm (keeps image)",
+            tags=frozenset({'destructive'}),
+        ),
+        # -- Snapshot / backup (Scenarios A + B from the backup panel) --------
+        WalkExampleSpec(
+            cmndName='containerProc_instanceCommit',
+            comment="# snapshot the running container -> new image tag",
+            tags=frozenset({'destructive', 'backup'}),
+        ),
+        WalkExampleSpec(
+            cmndName='containerProc_imageSave',
+            comment="# save image -> /bisos/var/dockerProc/backups/<user>/<img>/",
+            tags=frozenset({'backup'}),
+        ),
+        # -- Combined cleanup -------------------------------------------------
+        WalkExampleSpec(
+            cmndName='containerProc_fullClean',
+            comment="# instanceDelete + imageDelete",
+            tags=frozenset({'destructive'}),
+        ),
+    ]
+
+
+###############################################################################
 # End
 ###############################################################################
 

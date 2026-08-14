@@ -31,6 +31,20 @@ init/isolation profile.
 /bisos.dockerProc/ is a python package that uses the [[https://github.com/bisos-pip/pycs][PyCS-Framework]].
 It is a BISOS-Capability and a Standalone-BISOS-Package.
 
+*Architectural context.* =bisos.dockerProc= is *one realization* of a
+general BISOS facility for building walkable trees on top of =.spcs=
+(Spread Planted Command Services) --- currently the first realization,
+with =bisos.lcnt= (LaTeX content), static-web publication, and others
+planned. The =.spcs= mechanism itself lives in =bisos.csSeed=; the
+tree walker and =WalkExampleSpec= dataclass live in =bisos.fileObj=;
+the architecture that composes them (three-box layered figure,
+authoring recipe, canonical references) is documented at
+[[file:/bisos/git/auth/bxRepos/bisos-pip/pycs/spcs/README.org][=bisos.pycs/spcs/README.org=]].
+This README describes what makes /this/ realization specific ---
+path-anchoring on =debian/=, per-profile ports, cgroup variants,
+container-in-container safety, backup workflow, the six-image matrix
+of the companion =bro_dockerfiles= tree.
+
 #+BEGIN: b:org:pypi:readme/pkgDocumentation :pkgName "capability-cs" :comment "basic"
 
 # PYPI Documentation Comes Here in _description.org
@@ -252,6 +266,14 @@ The core of PyCS-Framework is the [[https://github.com/bisos-pip/b][bisos.b]] pa
 PyCS-Foundation).
 
 * The spcs Pattern: Directory Path as Configuration
+
+/=.spcs= is a general BISOS facility, not a =bisos.dockerProc= invention.
+For the architectural picture --- three-box layered figure, the
+=WalkExampleSpec= typed-data mechanism, the branch-side walker Cmnds
+(=fto_forwardToLeaves=, =fto_walkRunExternal=), and how to build a new
+consumer --- see
+[[file:/bisos/git/auth/bxRepos/bisos-pip/pycs/spcs/README.org][=bisos.pycs/spcs/README.org=]].
+This section summarises how =bisos.dockerProc= uses =.spcs=./
 
 A =.spcs= file (*Spread Planted Command Service*) is a thin Python file
 whose behaviour is entirely context-dependent on the directory in which

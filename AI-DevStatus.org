@@ -133,6 +133,66 @@ Raises =ValueError= loudly on unexpected path structure.
 - =containerProc_composeUp= with the cgroupVer=v1 path untested.
 - =containerProc_run= (rootless-sysd path) untested.
 - Multi-arch push path not implemented (build.bash --push equivalent not in seed yet).
+- *NEW (2026-08-13):* =containerProc_instanceCommit= and =containerProc_imageSave=
+  authored inside a container; no docker/podman daemon and no
+  =/bisos/var/dockerProc/= writability. See "Recent Changes" below for the
+  full verification checklist that must run on a VM.
+
+* Recent Changes (2026-08-13) --- Backup / Snapshot Work
+
+Authored inside a *container* --- verification pending on a VM with docker
+and podman installed. Nothing has been exercised end-to-end.
+
+** What was added
+
+- Blee panel =/bisos/panels/bisos-core/virtualization/docker/backupAndRestore/_nodeBase_/fullUsagePanel-en.org=:
+  educational content (three-layer model, container lifecycle, four
+  backup operations, instance→image/host transfer, host paths, scenario
+  guide). Panel scaffold pre-existed; six =foldingSection= subsections
+  filled with plain-org body content. No runtime dblocks added.
+- =py3/bin/dockerCmnds.cs=: informational =/Docker Backup + Restore/=
+  =menuSection= in =dockerDirectCmnds= showing commit, save/load,
+  export/import, volume backup as shell =literal(...)= examples.
+- =py3/bisos/dockerProc/containerProc_csu.py=:
+  - Parallel =/Podman Backup + Restore/= section in =podmanDirectCmnds=
+    (uses podman-native =volume export/import=).
+  - New helper =_backupsDir(p)= --- idempotent creation of
+    =/bisos/var/dockerProc/backups/<user>/<imageName>/= plus two
+    symlinks (leaf/backups ↔ backups/leaf).
+  - New Cmnd =containerProc_instanceCommit= (Scenario A): =engine
+    commit= with =--tag= / =--message= / =--author=. Default tag
+    =snapshot-<YYYYmmdd-HHMMSS>=.
+  - New Cmnd =containerProc_imageSave= (Scenario B): =engine save= to
+    the BISOS-convention backup path with =--tag= / =--outPath=
+    overrides. Uses =_backupsDir()= so first save also creates the
+    symlinks.
+  - =examples_csu()=: new "Backup / Snapshot" =menuSection= between
+    "Verify + Status" and "Combined", with example invocations and a
+    plain =docker load= / =podman load= restore hint.
+- =AI-WorkPlan.org=: the "Addition of container saving/backup..." TODO's
+  AI Results block records the above and enumerates the VM verification
+  checklist.
+
+** Load Cmnd NOT implemented
+
+Per user direction. Plain =docker load= / =podman load= handles the
+receive side. The =examples_csu()= restore hint points users at it.
+
+** UNTESTED --- verification required on a VM
+
+The 10-item verification checklist is in =AI-WorkPlan.org= under the
+"Addition of container saving/backup..." TODO's AI Results section.
+Key risk points:
+
+1. =/bisos/var/dockerProc/backups/<user>/<imageName>/= writability for
+   rootless-podman users --- if this fails, switch to a user-local path
+   for podman (mode "c" of the S2 design question).
+2. The commit source container name is assumed to equal =p.imageName=
+   (BISOS "one instance per leaf" convention). If a leaf's compose file
+   or run command uses a different container name, =commit= will fail.
+3. First-invocation symlink creation is =try/except OSError= (warns on
+   failure); should be exercised with both docker (multi-user, likely
+   root-owned =/bisos/var/=) and podman (user-owned) contexts.
 
 * Key Design Decisions
 

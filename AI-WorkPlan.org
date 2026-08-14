@@ -274,6 +274,106 @@ to instances. Legend + walk-through added to =README.org= under a new
 =Full Design at a Glance= section. Node margins tuned so rarrow/cylinder
 labels do not crowd the shape edges.
 
+** TODO [#B] <<Addition of container saving/backup to dockerCmnds.cs and seed>> :aiAndMe:
+SCHEDULED: <2026-08-13 Thu 18:53>
+Create a new section in the examples of dockerCmnds.cs for backup and restore
+Same for the seed for .spcs usage.
+----- AI Results: ------
+Done (2026-08-13). Delivered in three layers:
+
+*1. Blee panel* --- =/bisos/panels/bisos-core/virtualization/docker/backupAndRestore/_nodeBase_/fullUsagePanel-en.org=
+Filled the existing scaffold with six =foldingSection= subsections covering:
+- The three-layer model (image / container writable layer / volumes)
+- Container lifecycle: what persists across =stop/start/rm/rmi/volume rm=
+- The four backup/transfer operations (commit, save/load, export/import, volume backup)
+- Instance → image (commit) and instance → another host (three-and-a-half ways)
+- Where files live on the host (including BISOS convention path)
+- Which operation for which scenario (A/B/C decision guide, and what dockerProc automates)
+Panel is human-editable content only --- no runtime dblocks yet (deferred to
+subsequent TODOs in the panel's own Design and Evolution section).
+
+*2. Informational menus (all four operations, shell literals)*:
+- =py3/bin/dockerCmnds.cs= --- new =menuSection('/Docker Backup + Restore .../')= in
+  =dockerDirectCmnds= before the =/Docker Cleanups/= section. Shows commit, save/load
+  (with gzip variant), export/import, and volume backup as =literal(...)= examples,
+  with cross-reference to the Blee panel.
+- =py3/bisos/dockerProc/containerProc_csu.py= --- parallel section in
+  =podmanDirectCmnds= before =/Podman Cleanups/=. Same coverage plus
+  =podman volume export/import= (podman's native alternative to the alpine helper).
+
+*3. Real .spcs Cmnds (Scenarios A + B)* in =containerProc_csu.py=:
+- =_backupsDir(p)= helper: creates
+  =/bisos/var/dockerProc/backups/<user>/<imageName>/= (mkdir -p) and lays
+  down two symlinks lazily on first call:
+  - =<leafDir>/backups → /bisos/var/dockerProc/backups/<user>/<imageName>/=
+  - =/bisos/var/.../leaf → <leafDir>=
+  Idempotent (silent when links already exist; warns on OSError).
+- =containerProc_instanceCommit= (Scenario A): engine =commit= of the running
+  container to a new tag. Default tag =snapshot-<YYYYmmdd-HHMMSS>=; overridable
+  via =--tag=. Optional =--message= and =--author= for commit metadata.
+- =containerProc_imageSave= (Scenario B): engine =save= of an image to a
+  tarball. Default source =<imageName>:latest=; override with =--tag= to save a
+  specific snapshot. Default output at the BISOS-convention path; override
+  with =--outPath=. Uses =_backupsDir()= so first save creates the symlinks.
+- Wired into =examples_csu()= as a new "Backup / Snapshot" =menuSection= between
+  "Verify + Status" and "Combined", with example invocations plus a
+  literal =docker load= / =podman load= restore hint.
+
+Load Cmnd not implemented per user direction --- plain =docker load= /
+=podman load= handles the receive side, and the restore hint in
+=examples_csu()= points users at it.
+
+*** UNTESTED --- verification required on a VM
+
+This work was authored inside a *container*, where docker/podman
+daemons are not available and the =/bisos/var/dockerProc/= directory
+tree is not writable in the BISOS-standard way. *Nothing in this TODO
+has been exercised end-to-end.* Verification must happen on a VM with
+docker and podman installed, against a real planted leaf. The specific
+checks pending are:
+
+1. =pypiProc.sh -v -n showRun -i pkgReInstall edit /bisos/venv/py3/bisos3=
+   picks up the new Cmnds without a syntax/import error.
+2. In a planted leaf (any of the six in =bro_dockerfiles=): bare invocation
+   of =dockerProc.spcs= (or =podmanProc.spcs=) shows the new "Backup /
+   Snapshot" section in the examples menu, with the leaf's =imageName=
+   correctly substituted into the =comment= strings.
+3. =dockerProc.spcs -i containerProc_instanceCommit= against a *running*
+   container produces =<imageName>:snapshot-<timestamp>=, visible via
+   =docker image ls= / =podman image ls=.
+4. Same with =--tag=checkpoint=, =--message=..., --author=...= --- verify
+   commit metadata via =docker inspect=.
+5. =dockerProc.spcs -i containerProc_imageSave= produces a tarball at
+   =/bisos/var/dockerProc/backups/<user>/<imageName>/<imageName>-latest-<timestamp>.tar=
+   AND creates both symlinks on first invocation:
+   - =<leafDir>/backups → /bisos/var/dockerProc/backups/<user>/<imageName>/=
+   - =/bisos/var/.../leaf → <leafDir>=
+   Second invocation should NOT complain about existing symlinks
+   (idempotent).
+6. =containerProc_imageSave --tag=<commitTag>= saves the commit
+   snapshot from step 3, not =latest=.
+7. =containerProc_imageSave --outPath=/tmp/foo.tar= writes to the
+   override path (and does NOT create the =/bisos/var/...= directory
+   or symlinks).
+8. Repeat 3-7 on a rootless-sysd (podman) leaf --- verify no permission
+   errors on =/bisos/var/dockerProc/backups/= (this is the risk case;
+   we may need to fall back to a user-local path for podman).
+9. =docker load -i <tarball>= (or =podman load=) on a *different* VM
+   restores the image.
+10. Informational menus: =dockerCmnds.cs -i examples= shows the new
+    "/Docker Backup + Restore/" section; =podmanCmnds.cs -i examples=
+    shows the parallel podman section.
+
+*Known risk:* the =/bisos/var/dockerProc/backups/= path may not exist
+or may not be writable by non-root users. If rootless-podman testing
+fails on permission, the correct fix is to switch S2 (user scoping) to
+mode (c) --- user-local path for podman, /bisos/var/ path for docker
+--- rather than papering over with sudo.
+
+No =verify.sh= tests added; =bisos.dockerProc= does not have a verify.sh
+test suite yet. Consider adding one as a separate TODO if this pattern
+recurs.
+
 
 * Stage 4: Implement the Platform Registrar
 
