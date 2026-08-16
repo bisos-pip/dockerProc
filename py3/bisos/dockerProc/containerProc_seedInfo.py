@@ -366,6 +366,12 @@ def walkExamples() -> list:
             comment="# instanceDelete + imageDelete",
             tags=frozenset({'destructive'}),
         ),
+        # -- Install (one-shot inside container) ------------------------------
+        WalkExampleSpec(
+            cmndName='containerProc_exec_installRawBisos',
+            comment="# cd ~/raw-bisos && bash installRawBisos.sh",
+            tags=frozenset({'destructive', 'install'}),
+        ),
     ]
 
 

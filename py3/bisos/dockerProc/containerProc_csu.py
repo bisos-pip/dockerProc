@@ -492,16 +492,26 @@ class containerProc_instanceLogs(cs.Cmnd):
 
 
 class containerProc_instanceExec(cs.Cmnd):
-    """Exec a command inside the running container (default: interactive bash).
+    """Exec a command inside the running container.
 
-    execCmd='<cmd>' runs the given command instead of bash.
+    Positional args (after =--=) go straight to =<engine> exec -it <container> ...=.
+    With no args, drops into interactive bash.
+
+    Examples:
+      containerProc_instanceExec                    # interactive bash
+      containerProc_instanceExec -- uname -a        # run uname -a
+      containerProc_instanceExec -- ls -la /home    # run ls with args
+
+    Legacy: =execCmd='<cmd>'= still supported for single-command invocation
+    without =--= --- kept for backward compatibility; prefer positional args.
+
     Note: on old Podman (4.3.1), 'exec' into a rootless systemd container may
     fail with a cgroup.procs permission error --- use SSH instead
     (ssh -p <sshPort> bystar@localhost).
     """
     cmndParamsMandatory = []
     cmndParamsOptional = ['execCmd']
-    cmndArgsLen = {'Min': 0, 'Max': 0}
+    cmndArgsLen = {'Min': 0, 'Max': 9999}
 
     @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
     def cmnd(
@@ -511,16 +521,74 @@ class containerProc_instanceExec(cs.Cmnd):
         execCmd: typing.Optional[str] = None,
         argsList: typing.Optional[list[str]] = None,
     ) -> b.op.Outcome:
-        """engine exec -it <container> <cmd>."""
+        """engine exec -it <container> <argsList...> | execCmd | bash."""
         callParamsDict = {'execCmd': execCmd}
         if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
         engine = p.engine.value
-        cmdToRun = execCmd or 'bash'
-        _run([engine, 'exec', '-it', p.imageName, cmdToRun], check=False)
-        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"exec {cmdToRun}")
+
+        # Precedence: positional args > --execCmd > interactive bash
+        if argsList:
+            argv = [engine, 'exec', '-it', p.imageName, *argsList]
+            resultLabel = f"exec {' '.join(argsList)}"
+        elif execCmd:
+            argv = [engine, 'exec', '-it', p.imageName, execCmd]
+            resultLabel = f"exec {execCmd}"
+        else:
+            argv = [engine, 'exec', '-it', p.imageName, 'bash']
+            resultLabel = "exec bash"
+
+        _run(argv, check=False)
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=resultLabel)
+
+
+###############################################################################
+# exec_* --- one-shot install / post-install scripts inside the container.
+# These are convenience wrappers over 'engine exec': they know a specific
+# script path + invocation pattern, so the user doesn't have to remember it.
+###############################################################################
+
+class containerProc_exec_installRawBisos(cs.Cmnd):
+    """Run ~/raw-bisos/installRawBisos.sh inside the running container.
+
+    installRawBisos.sh (part of the image at /home/<user>/raw-bisos/) refreshes
+    raw-bisos.sh via wget from bxGenesis/start and then runs it
+    non-interactively as =raw-bisos.sh -v -n showRun -i installUnsitedBisos=.
+
+    Roughly equivalent to:
+      <engine> exec -it <container> bash -l -c 'cd ~/raw-bisos && bash installRawBisos.sh'
+
+    The container's image default USER (typically =bystar=) is honored --- no =-u=.
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = []
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """engine exec -it <container> bash -l -c 'cd ~/raw-bisos && bash installRawBisos.sh'."""
+        callParamsDict = {}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        p = _params()
+        engine = p.engine.value
+        _run(
+            [engine, 'exec', '-it', p.imageName,
+             'bash', '-l', '-c', 'cd ~/raw-bisos && bash installRawBisos.sh'],
+            check=False,
+        )
+        return cmndOutcome.set(
+            opError=b.op.OpError.Success,
+            opResults="ran installRawBisos.sh",
+        )
 
 
 ###############################################################################
@@ -1188,11 +1256,25 @@ def examples_csu() -> None:
     cmnd('containerProc_instanceLogs', pars=od([('follow', 'true')]),
          comment="# follow (tail -f)")
     cmnd('containerProc_instanceExec', comment="# interactive bash")
+    cs.examples.execInsert(
+        "./dockerProc.spcs -i containerProc_instanceExec -- uname -a"
+    )
+    cs.examples.execInsert(
+        "./dockerProc.spcs -i containerProc_instanceExec -- cat /etc/debian_version"
+    )
+    cs.examples.execInsert(
+        "./dockerProc.spcs -i containerProc_instanceExec -- ls -la /home/bystar/raw-bisos"
+    )
     if isPodman:
         # Rootless-sysd exec-into is unreliable on old Podman; SSH is preferred
         cs.examples.execInsert(
             f"ssh -p {p.sshPort} bystar@localhost   # preferred for rootless-sysd"
         )
+
+    cs.examples.menuSection('Install (one-shot inside container)')
+    cmnd('containerProc_exec_installRawBisos',
+         comment="# cd ~/raw-bisos && bash installRawBisos.sh")
+
     cmnd('containerProc_instanceDelete', comment="# stop + rm instance (keeps image)")
     if isDocker and supportsV1:
         cmnd('containerProc_instanceDelete', pars=od([('cgroupVer', 'v1')]),
@@ -1264,6 +1346,8 @@ def _examplesUnfiltered() -> None:
     cmnd('containerProc_instanceLogs')
     cmnd('containerProc_instanceLogs', pars=od([('follow', 'true')]))
     cmnd('containerProc_instanceExec')
+    cs.examples.execInsert("dockerProc.spcs -i containerProc_instanceExec -- uname -a")
+    cmnd('containerProc_exec_installRawBisos')
     cmnd('containerProc_instanceDelete')
 
     cs.examples.menuSection('Verify + Status')

@@ -57,6 +57,48 @@ usual "one Dockerfile, one =docker run= line" pattern falls short. If
 any of the following describes your situation, this package is
 built for you.
 
+** RawBisos-Reconstruction --- BISOS's Equivalent of the Common CI/CD Pipeline
+
+*BISOS's equivalent of the common CI/CD pipeline is called
+RawBisos-Reconstruction.* Two execution substrates exist:
+
+- *Vagrant-based variant* (canonical, in =bxGenesis/start=) --- provisions a
+  full VM from scratch, runs =raw-bisos.sh -i installUnsitedBisos= against it,
+  validates the resulting environment. Heavyweight; suitable for full-release
+  validation.
+- *Container-based variant* (this package + =bro_dockerfiles=) --- provisions
+  a fresh Debian container, runs =installRawBisos.sh= inside it, validates the
+  resulting environment. Lightweight; suitable for on-demand validation
+  during development.
+
+The container-based variant runs entirely from planted =.spcs= files. No CI
+service, no VM lifecycle. The six =bro_dockerfiles= leaves
+(deb12/deb13 × confined/privileged/rootless-sysd) are the test matrix.
+
+*Typical one-shot per variant* (from any leaf):
+
+: cd bro_dockerfiles/debian/12/confined/vnc/xfce/bisos_deb12-fresh
+: ./dockerProc.spcs -i containerProc_imageBuild
+: ./dockerProc.spcs -i containerProc_instanceUp
+: ./dockerProc.spcs -i containerProc_exec_installRawBisos    # bxGenesis bootstrap inside container
+: ./dockerProc.spcs -i containerProc_instanceVerify
+: ./dockerProc.spcs -i containerProc_fullClean
+
+Or *across the whole matrix* from =bro_dockerfiles/debian/=:
+
+: ./ftoBranchProc.spcs -i fto_forwardToLeaves --cmndName=containerProc_exec_installRawBisos
+
+Each of the six leaves subprocess-runs the bootstrap independently
+(via =bisos.fileObj= Stage 2 Deliverable 6 subprocess-per-branch).
+Results stream to stdout; a failing bootstrap on one variant does not
+mask successful bootstraps on the others.
+
+The =installRawBisos.sh= script (baked into each image at =~/raw-bisos/=)
+refreshes =raw-bisos.sh= from =bxGenesis/start= via wget and invokes it
+non-interactively with =-v -n showRun -i installUnsitedBisos=. This means
+every reconstruction is against the *current* head of =bxGenesis/start=, not
+a pinned snapshot --- catches regressions as they land.
+
 ** Reproducible XFCE Desktops on Debian 12 and 13
 
 You want an XFCE4 desktop, accessible via VNC / noVNC / SSH, built the
