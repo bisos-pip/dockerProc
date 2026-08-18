@@ -173,9 +173,9 @@ class examples(cs.Cmnd):
         cs.examples.commonBrief()
 
         csXuName = cs.G.icmMyName()
-        if "dockerCmnds" in csXuName:
+        if "quickDocker" in csXuName:
             dockerDirectCmnds().pyCmnd()
-        elif "podmanCmnds" in csXuName:
+        elif "quickPodman" in csXuName:
             dockerProc_csu.podmanDirectCmnds().pyCmnd()
         else:
             return failed(cmndOutcome)
