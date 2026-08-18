@@ -43,7 +43,7 @@ def longDescription():
 # b:py3:pypi:setup/version Arguments  :forSys t :forPyPi t :constant "666"
 ####+BEGIN: b:py3:pypi:setup/version :comment "Auto Detected"
 
-# ./pypiUploadVer DID NOT exist -- forPypiVersion=0.11 -- forLocalVersion=0.1 -- constant=NA
+# ./pypiUploadVer DID NOT exist -- forPypiVersion=0.13 -- forLocalVersion=0.1 -- constant=NA
 def pkgVersion():
         return '0.1'
 
@@ -74,15 +74,15 @@ scripts = [
 'bin/containerProc-seed.cs',
 'bin/dockerCmnds.cs',
 'bin/dockerInstall.sh',
-'bin/dockerProc-sbom.pcs',
 'bin/dockerProc.cs',
+'bin/dockerProc-sbom.pcs',
 'bin/dockerProc.spcs',
 'bin/exmpl-dockerProc.cs',
 'bin/hostPodmanVerify.sh',
-'bin/podman-sbom.pcs',
 'bin/podmanCmnds.cs',
 'bin/podmanHostVerify.cs',
 'bin/podmanProc.spcs',
+'bin/podman-sbom.pcs',
 ]
 ####+END:
 

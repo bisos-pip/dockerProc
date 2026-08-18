@@ -1,0 +1,40 @@
+
+* Directory Naming Structure
+- Now:          /bxRepos/bxObjects/bro_dockerfiles/debian/13/rootless-sysd/vnc/xfce/bisos_deb13-rootless-sysd
+- Should Be:    /bxRepos/bxObjects/bro_dockerfiles/debian/13/rootless/vnc/xfce/fresh-sysd-bisos
+
+- Now:          /bxRepos/bxObjects/bro_dockerfiles/debian/13/privileged/vnc/xfce/bisos_deb13-sysd
+- Should Be:    /bxRepos/bxObjects/bro_dockerfiles/debian/13/privileged/vnc/xfce/fresh-sysd-bisos
+
+- Now:          /bxRepos/bxObjects/bro_dockerfiles/debian/13/confined/vnc/xfce//bisos_deb13-fresh
+- Should Be:    /bxRepos/bxObjects/bro_dockerfiles/debian/13/confined/vnc/xfce/fresh-entry-bisos
+
+* Image Naming Structure
+
+bisos/deb-13-rootless-vnc-xfce-fresh-sysd:<ver>
+bisos/deb-13-priviledged-vnc-xfce-fresh-sysd:<ver>
+bisos/deb-13-confined-vnc-xfce-fresh-entry:<ver>
+
+./control.fps/image/ver/value   <---  <ver> comes from
+./control.fps/image/name/value
+./control.fps/image/fullName/value
+
+* Container Instance Name
+
+bisos_deb-13-confined-vnc-xfce-fresh-entry_<instanceNu>
+
+Results in creation of iVar as subdirs as <instanceNu> -- For each instance,
+
+.../xfce/bisos_deb13-sysd/iVar/0/control.fps/ports/ssh/value
+.../xfce/bisos_deb13-sysd/iVar/0/control.fps/ports/vnc/value
+.../xfce/bisos_deb13-sysd/iVar/0/control.fps/ports/novnc/value
+
+* Container Instance Registrar
+
+platformRegistrar_containerInstance_obtain(
+    user=name,
+    imageFullName=name,
+    instanceNu=None,
+    portsDict={"ssh":0, "vnc":0, "noVnc":0, "otherPortToExpose": 0 }
+
+ Returns: instnaceNu and portsDict
