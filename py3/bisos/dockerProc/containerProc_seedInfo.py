@@ -73,12 +73,12 @@ _PORT_TABLE: dict[tuple[str, Profile], dict[str, int]] = {
 }
 
 _BASE_IMAGE_TABLE: dict[tuple[str, Profile], str] = {
-    ("12", Profile.Confined):     "bisos/deb12-fresh-vnc-xfce:1.21",
-    ("12", Profile.Privileged):   "bisos/deb12-fresh-vnc-xfce:1.21",
-    ("12", Profile.RootlessSysd): "bisos/deb12-fresh-vnc-xfce:1.21",
-    ("13", Profile.Confined):     "bisos/deb13-fresh-vnc-xfce:4",
-    ("13", Profile.Privileged):   "bisos/deb13-fresh-vnc-xfce:4",
-    ("13", Profile.RootlessSysd): "bisos/deb13-fresh-vnc-xfce:4",
+    ("12", Profile.Confined):     "bisos_deb12-fresh:latest",
+    ("12", Profile.Privileged):   "bisos_deb12-fresh:latest",
+    ("12", Profile.RootlessSysd): "bisos_deb12-fresh:latest",
+    ("13", Profile.Confined):     "bisos_deb13-fresh:latest",
+    ("13", Profile.Privileged):   "bisos_deb13-fresh:latest",
+    ("13", Profile.RootlessSysd): "bisos_deb13-fresh:latest",
 }
 
 
