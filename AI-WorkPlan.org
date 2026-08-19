@@ -430,6 +430,17 @@ Port allocation pool: e.g. =sshPort= in =20000--29999=, =vncPort= in
 * Stage 4 TODOs
 
 ** +
+** TODO [#A] Absorb ./ImageInstanceNaming.org :aiAndMe:
+SCHEDULED: <2026-08-11 Tue>
+Convert Image Names to Model of ./ImageInstanceNaming.org.
+Create instances based on the model of ./ImageInstanceNaming.org.
+----- AI Results: ------
+
+** TODO [#A] Define the interface between bisos.docker and DockerProc_RegFPs :aiAndMe:
+SCHEDULED: <2026-08-11 Tue>
+Hints for the interface is in ./ImageInstanceNaming.org.
+----- AI Results: ------
+
 ** TODO [#A] Add =containerProc_regfps.py= module with =DockerProc_RegFPs= class :ai:
 SCHEDULED: <2026-08-11 Tue>
 Model on =bisos.siteRegistrars.containerRegfps.Container_RegFPs=
@@ -632,7 +643,15 @@ Once implementation is done, update =README.org=:
 
 ** -
 
+* Stage 5 Misc and Maintenance TODOs
 
+** +
+** TODO Make quickXx be a bisos pattern. Break Backup into separate examples. :aiAndMe:
+SCHEDULED: <2026-08-18 Tue 16:56>
+quickGit.cs quickKvm.cs quickPip.cs etc
+----- AI Results: ------
+
+** -
 
 # Local Variables:
 # eval: (setq-local toc-org-max-depth 4)
