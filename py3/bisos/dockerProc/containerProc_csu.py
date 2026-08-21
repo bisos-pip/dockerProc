@@ -309,7 +309,7 @@ class containerProc_instanceUp(cs.Cmnd):
             # podman rootless-sysd
             detachFlag = ['-d'] if detach else []
             cmd = (
-                ['podman', 'run', '--systemd=always']
+                ['podman', 'run', '--pids-limit=16384', '--systemd=always']
                 + detachFlag
                 + [
                     '--name', p.imageName,
