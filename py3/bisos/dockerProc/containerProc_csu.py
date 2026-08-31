@@ -573,18 +573,23 @@ class containerProc_exec_installRawBisos(cs.Cmnd):
         cmndOutcome: b.op.Outcome,
         argsList: typing.Optional[list[str]] = None,
     ) -> b.op.Outcome:
-        """engine exec -it <container> bash -l -c 'cd ~/raw-bisos && bash installRawBisos.sh'."""
+        """engine exec -u bystar <container> bash -l -c 'cd ~/raw-bisos && bash installRawBisos.sh'."""
         callParamsDict = {}
         if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
         engine = p.engine.value
-        _run(
-            [engine, 'exec', '-it', p.imageName,
+        # Run as bystar (not the image's default USER, which is root on sysd/privileged
+        # leaves) so ~ resolves to /home/bystar. No -t: this is driven non-interactively
+        # and 'exec -it' aborts with "the input device is not a TTY".
+        result = _run(
+            [engine, 'exec', '-u', 'bystar', p.imageName,
              'bash', '-l', '-c', 'cd ~/raw-bisos && bash installRawBisos.sh'],
             check=False,
         )
+        if result.returncode != 0:
+            return b_io.eh.badOutcome(cmndOutcome)
         return cmndOutcome.set(
             opError=b.op.OpError.Success,
             opResults="ran installRawBisos.sh",

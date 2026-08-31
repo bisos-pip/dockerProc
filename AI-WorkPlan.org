@@ -28,6 +28,14 @@ TODO below is the standard first step, or use =/bx-confirm0= as the automated eq
 TODOs tagged =:ai:= are assigned to Claude. After completing a TODO, summarize results
 under =----- AI Results: ------= and mark it DONE.
 
+* Related Blee Panel --- Docker/Containers
+
+Permanent, human-oriented Docker/container docs and cross-cutting decisions live in
+the Blee panel:
+=/bisos/git/auth/bxRepos/blee-binders/bisos-core/virtualization/docker/_nodeBase_/fullUsagePanel-en.org=
+(also at =/bisos/panels/bisos-core/virtualization/docker/=). E.g. it records the
+=/dev/shm=2G= resize (=dev-shm-resize.service=) on the privileged sysd leaves for Chrome.
+
 * Stage 0: Confirm AI's Understanding of This Repo's Context
 
 Goal: Confirm AI's understanding of the context and capture that in [[Context Confirmation]] TODO.
