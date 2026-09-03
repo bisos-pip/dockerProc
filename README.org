@@ -45,10 +45,85 @@ path-anchoring on =debian/=, per-profile ports, cgroup variants,
 container-in-container safety, backup workflow, the six-image matrix
 of the companion =bro_dockerfiles= tree.
 
+For how this package relates to =bro_dockerfiles=, =bisos.fileObj= and
+the =rawBuild*= reconstruction commands, see
+[[#related-pieces-----where-this-fits][Related Pieces --- Where This Fits]] below.
+
 #+BEGIN: b:org:pypi:readme/pkgDocumentation :pkgName "capability-cs" :comment "basic"
 
 # PYPI Documentation Comes Here in _description.org
 #+END:
+
+* Related Pieces --- Where This Fits
+  :PROPERTIES:
+  :CUSTOM_ID: related-pieces-----where-this-fits
+  :END:
+
+This package is one of *four related pieces*. Each has a distinct job and none
+subsumes another. This package is the *framework*; =bro_dockerfiles= is the
+content it operates on.
+
+| Piece                                | Kind        | Job                                                                                                                                                                       |
+|--------------------------------------+-------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =bisos.dockerProc= (*this package*)    | pip package | *Container framework.* The planted =dockerProc.spcs= / =podmanProc.spcs=, path-derived parameters, and the =containerProc_*= verbs that build / run / verify one leaf.       |
+| [[https://github.com/bxObjects/bro_dockerfiles][=bro_dockerfiles=]]                   | BRO (repo)  | *Container image specifications.* The six-leaf matrix --- Dockerfiles, systemd units, per-leaf assets, and the =~/raw-bisos= payload baked into each image.                  |
+| [[https://github.com/bisos-pip/fileObj][=bisos.fileObj=]]                      | pip package | *Generic tree walker.* FTO marker conventions plus =ftoBranchProc.spcs=, which applies one verb across every leaf beneath a branch. Domain-agnostic --- knows nothing about containers. |
+| [[https://github.com/bisos/raw][=/bisos/core/raw/rebuild=]]           | git repo    | *RawBisos-Reconstruction --- BISOS's CI/CD.* =rawBuildBox.cs= / =rawBuildKvm.cs= / =rawBuildContainer.cs=: one uniform entry point for rebuilding Raw-BISOS on metal, in a KVM guest, or in a container. |
+
+This package and =bro_dockerfiles= are *jointly designed* and evolve together
+--- framework and specifications, useless apart. The other two are at arm's
+length in opposite directions:
+
+- *Below/beside --- =bisos.fileObj=.* This package supplies the walker with
+  typed data (=walkExamples()= → =WalkExampleSpec=, and
+  =leafProcessorNames()= → the =.spcs= filenames that definitionally identify
+  a leaf). Each branch =.spcs= in =bro_dockerfiles= passes those into
+  =ftoBranch_seedInfo.setup()=. The consequence: adding a new
+  =containerProc_*= Cmnd here and listing it in =walkExamples()= makes it
+  appear in *every* branch's examples menu, with no edit to the planted files.
+  The dependency is one-way --- =bisos.fileObj= never imports this package.
+
+- *Above --- the =rawBuild*= family.* =rawBuildContainer.cs= locates a leaf and
+  subprocess-invokes its planted =.spcs=, exactly as its siblings shell out to
+  =sysCharGuestMaterialize.sh= and =sysCharBoxMaterialize.sh=. Each of its
+  =steps= maps onto one verb defined here: =up= → =containerProc_instanceUp=,
+  =delete= → =containerProc_instanceDelete=, =installRawBisos= →
+  =containerProc_exec_installRawBisos=, =verifyUp= →
+  =containerProc_instanceVerify=. That repo contributes the *sequencing* and
+  the cross-platform symmetry; the container work itself is this package's.
+
+** Two Ways to Drive More Than One Leaf
+   :PROPERTIES:
+   :CUSTOM_ID: two-ways-to-drive-more-than-one-leaf
+   :END:
+
+Two facilities operate above a single leaf. They are not competing --- they
+answer *different questions*:
+
+- *=bisos.fileObj= walker --- location-addressed, breadth.* /One verb, every
+  leaf beneath where you are standing./ Selection is *position in the tree*:
+  stand at =debian/13/= and the verb reaches both Debian 13 leaves; stand at
+  =debian/= and it reaches all six.
+
+  #+begin_src bash
+  cd bro_dockerfiles/debian
+  ./ftoBranchProc.spcs -i fto_forwardToLeaves --cmndName=containerProc_instanceVerify
+  #+end_src
+
+- *=rawBuildContainer.cs= --- parameter-addressed, depth.* /One leaf, an
+  ordered sequence of steps./ Selection is =freshDeb= plus =platformModel=
+  (=confined= / =sysd-priv= / =sysd-podman=).
+
+  #+begin_src bash
+  rawBuildContainer.cs -i procContainer --freshDeb="13" --platformModel="sysd-priv" \
+      --steps='["delete", "up", "installRawBisos", "verifyUp"]'
+  #+end_src
+
+The =rawBuild*= family deliberately does not use the walker: its sibling
+commands target a KVM guest by =bpoId= and a box by IP address, and have no
+tree to walk. A tree is a container-side property that only one of the three
+platform kinds has --- which is also why the =steps= pipeline lives up there
+rather than being pushed down into this package as a leaf verb.
 
 * Use Cases
 
@@ -88,10 +163,21 @@ Or *across the whole matrix* from =bro_dockerfiles/debian/=:
 
 : ./ftoBranchProc.spcs -i fto_forwardToLeaves --cmndName=containerProc_exec_installRawBisos
 
-Each of the six leaves subprocess-runs the bootstrap independently
-(via =bisos.fileObj= Stage 2 Deliverable 6 subprocess-per-branch).
+Each of the six leaves subprocess-runs the bootstrap independently (the
+walker comes from =bisos.fileObj=; see
+[[#related-pieces-----where-this-fits][Related Pieces --- Where This Fits]]).
 Results stream to stdout; a failing bootstrap on one variant does not
 mask successful bootstraps on the others.
+
+*Containers are one of three reconstruction substrates.* Above both of
+the above, =/bisos/core/raw/rebuild= provides the platform-independent
+entry point --- =rawBuildContainer.cs=, =rawBuildKvm.cs=,
+=rawBuildBox.cs= --- so the same reconstruction is expressed the same
+way whether the target is a container, a KVM guest, or raw metal. Its
+=procContainer= command drives one of this package's leaves through an
+ordered pipeline of the verbs listed above:
+
+: rawBuildContainer.cs -i procContainer --freshDeb="13" --platformModel="sysd-priv" --steps='["delete", "up", "installRawBisos", "verifyUp"]'
 
 The =installRawBisos.sh= script (baked into each image at =~/raw-bisos/=)
 refreshes =raw-bisos.sh= from =bxGenesis/start= via wget and invokes it
@@ -243,6 +329,8 @@ then read the figure.
 
 * Table of Contents     :TOC:
 - [[#overview][Overview]]
+- [[#related-pieces-----where-this-fits][Related Pieces --- Where This Fits]]
+  - [[#two-ways-to-drive-more-than-one-leaf][Two Ways to Drive More Than One Leaf]]
 - [[#use-cases][Use Cases]]
   - [[#reproducible-xfce-desktops-on-debian-12-and-13][Reproducible XFCE Desktops on Debian 12 and 13]]
   - [[#choosing-among-three-initisolation-profiles-for-the-same-image][Choosing Among Three Init/Isolation Profiles for the Same Image]]
@@ -621,9 +709,17 @@ BISOS these panels are accessible under the Blee "Panels" menu.
 See [[file:./py3/panels/bisos.dockerProc/_nodeBase_/fullUsagePanel-en.org]]
 for a starting point.
 
-The companion repo =bro_dockerfiles= has its own README with details on
-each image variant, host cgroup v1/v2 compatibility, and the per-leaf
-build / verify recipes.
+The related pieces each have their own README:
+
+- [[file:/bisos/git/auth/bxRepos/bxObjects/bro_dockerfiles/README.org][=bro_dockerfiles/README.org=]]
+  --- the companion image specifications: each image variant, host cgroup
+  v1/v2 compatibility, and the per-leaf build / verify recipes.
+- [[file:/bisos/git/auth/bxRepos/bisos-pip/fileObj/README.org][=bisos.fileObj/README.org=]]
+  --- the generic FTO tree walker and its marker-file conventions.
+- [[file:/bisos/git/auth/bxRepos/bisos/raw/rebuild/README.org][=raw/rebuild/README.org=]]
+  --- RawBisos-Reconstruction across boxes, guests and containers.
+- [[file:/bisos/git/auth/bxRepos/bisos-pip/pycs/spcs/README.org][=bisos.pycs/spcs/README.org=]]
+  --- the =.spcs= architecture (three-box layered figure) all of this rests on.
 
 /bisos.dockerProc/ is best developed with [[https://github.com/bx-blee][Blee]], the /By* BISOS
 Libre-Halaal Emacs Environment/ --- a layer on top of Emacs and BISOS
