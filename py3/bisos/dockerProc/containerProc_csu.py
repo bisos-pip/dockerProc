@@ -327,7 +327,7 @@ class containerProc_instanceDown(cs.Cmnd):
     """Stop the running container instance (does NOT remove --- use instanceDelete for that).
 
     Dispatches on p.engine:
-      - docker → 'docker compose down' (stops + removes compose service).
+      - docker → 'docker compose stop' (stop only; container still exists).
       - podman → 'podman stop' (stop only; container still exists).
 
     For docker leaves, cgroupVer='v1' selects docker-compose.cgv1.yml.
@@ -357,8 +357,8 @@ class containerProc_instanceDown(cs.Cmnd):
                 if cgroupVer == 'v1'
                 else 'docker-compose.yml'
             )
-            _run(['docker', 'compose', '-f', str(leafDir / composeFile), 'down'])
-            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Down: {composeFile}")
+            _run(['docker', 'compose', '-f', str(leafDir / composeFile), 'stop'])
+            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Stopped: {composeFile}")
         else:
             # podman: stop (does not rm; use instanceDelete for stop+rm)
             _run(['podman', 'stop', p.imageName], check=False)
