@@ -28,7 +28,10 @@ TODO below is the standard first step, or use =/bx-confirm0= as the automated eq
 TODOs tagged =:ai:= are assigned to Claude. After completing a TODO, summarize results
 under =----- AI Results: ------= and mark it DONE.
 
-* Related Blee Panel --- Docker/Containers
+
+* Overview, Context and Related Info (Blee Panels, BXOs)
+
+** Related Blee Panel --- Docker/Containers
 
 Permanent, human-oriented Docker/container docs and cross-cutting decisions live in
 the Blee panel:
@@ -36,14 +39,18 @@ the Blee panel:
 (also at =/bisos/panels/bisos-core/virtualization/docker/=). E.g. it records the
 =/dev/shm=2G= resize (=dev-shm-resize.service=) on the privileged sysd leaves for Chrome.
 
+** bro_dockerFiles
+
+See README.org for details
+
+
 * Stage 0: Confirm AI's Understanding of This Repo's Context
 
 Goal: Confirm AI's understanding of the context and capture that in [[Context Confirmation]] TODO.
 
-
 * Stage 0 TODOs
 ** +
-** TODO [#A] <<Context Confirmation>> for AI (typically triggered by /bx-confirm0) :aiAndMe:
+** LOOP [#A] <<Context Confirmation>> for AI (typically triggered by /bx-confirm0) :aiAndMe:
 SCHEDULED: <2026-06-09 Tue>
 Must be repeated each time a new Claude instance is started here.
 Based on the series of files starting from CLAUDE.md in this repo,
@@ -52,6 +59,7 @@ Enumerate explicitly which files you have imported and which you have considered
 Prompt the user to confirm that the desired/appropriate model (/model) is being used for this project.
 ----- AI Results: ------
 ** -
+
 
 * Stage 1: containerProc spcs framework
 
@@ -64,27 +72,27 @@ Both delegate to the same =containerProc-seed.cs=.
 
 ** Naming conventions
 
-| Artifact                  | Name                        | Rationale                              |
-|---------------------------+-----------------------------+----------------------------------------|
-| pip package               | =bisos.dockerProc=          | Short, matches image repo context      |
-| docker planted file       | =dockerProc.spcs=           | Engine-explicit; used in docker leaves |
-| podman planted file       | =podmanProc.spcs=           | Engine-explicit; used in podman leaves |
-| seed entry point          | =containerProc-seed.cs=     | Engine-agnostic abstraction            |
-| seedInfo module           | =containerProc_seedInfo.py= | =container_= prefix = engine-agnostic  |
-| csu module                | =containerProc_csu.py=      | Same                                   |
-| seed registration module  | =containerProc_seed.py=     | Same                                   |
+| Artifact                 | Name                      | Rationale                              |
+|--------------------------+---------------------------+----------------------------------------|
+| pip package              | =bisos.dockerProc=          | Short, matches image repo context      |
+| docker planted file      | =dockerProc.spcs=           | Engine-explicit; used in docker leaves |
+| podman planted file      | =podmanProc.spcs=           | Engine-explicit; used in podman leaves |
+| seed entry point         | =containerProc-seed.cs=     | Engine-agnostic abstraction            |
+| seedInfo module          | =containerProc_seedInfo.py= | =container_= prefix = engine-agnostic    |
+| csu module               | =containerProc_csu.py=      | Same                                   |
+| seed registration module | =containerProc_seed.py=     | Same                                   |
 
 ** Path-to-parameter mapping
 
 The leaf path =debian/<release>/<profile>/vnc/xfce/<imageName>/= encodes:
 
-| Path segment  | Parameter derived                                                       |
-|---------------+-------------------------------------------------------------------------|
-| =debian=      | distro                                                                  |
-| =<release>=   | 12 or 13 → base OS, base image tag                                     |
-| =<profile>=   | =confined= / =privileged= / =rootless-sysd= → engine, init, privilege  |
-| =vnc/xfce=    | desktop type → VNC/noVNC ports, xstartup variant                       |
-| =<imageName>= | image name → DockerHub name, container name                             |
+| Path segment | Parameter derived                                               |
+|--------------+-----------------------------------------------------------------|
+| =debian=       | distro                                                          |
+| =<release>=    | 12 or 13 → base OS, base image tag                              |
+| =<profile>=    | =confined= / =privileged= / =rootless-sysd= → engine, init, privilege |
+| =vnc/xfce=     | desktop type → VNC/noVNC ports, xstartup variant                |
+| =<imageName>=  | image name → DockerHub name, container name                     |
 
 From these the seed derives: engine (docker vs podman), base image name, host
 port assignments, =--privileged= flag, =--isolation=chroot= for rootless,
@@ -92,8 +100,8 @@ port assignments, =--privileged= flag, =--isolation=chroot= for rootless,
 
 ** Planted files per profile
 
-| Profile         | Planted file      | Engine |
-|-----------------+-------------------+--------|
+| Profile       | Planted file    | Engine |
+|---------------+-----------------+--------|
 | =confined=      | =dockerProc.spcs= | docker |
 | =privileged=    | =dockerProc.spcs= | docker |
 | =rootless-sysd= | =podmanProc.spcs= | podman |
@@ -108,282 +116,38 @@ by its location.
 Reference: =bisos-pip/_skills/spread-seeded-cs-commands/SKILL.md=
 Precedent: =pypiProc.sh= (bash) planted in 50+ =bisos-pip/<pkg>/py3/= dirs.
 
-* Stage 1 TODOs
+* Stage 1 TODOs -- Archived
 ** +
-** DONE [#A] Scaffold bisos.dockerProc as a proper bisos-pip PyCS package :aiAndMe:
-SCHEDULED: <2026-08-10 Sun>
-CLOSED: [2026-08-10 Sun]
-The repo exists at =/bisos/git/auth/bxRepos/bisos-pip/dockerProc=.
-Scaffold it as a full bisos-pip PyCS seed package:
-- =py3/bisos/dockerProc/containerProc_seedInfo.py= — parameter dataclasses,
-  enums (Engine, Profile, CgroupVer), =paramsFromPlantPath()= pure function
-- =py3/bisos/dockerProc/containerProc_seed.py= — atexit registration
-- =py3/bisos/dockerProc/containerProc_csu.py= — CS command stubs
-- =py3/bin/containerProc-seed.cs= — seed entry point
-- =py3/bin/dockerProc.spcs= — planted file for docker leaves
-- =py3/bin/podmanProc.spcs= — planted file for podman/rootless leaves
-- =py3/pypiProc.sh=, =setup.py= / =pyproject.toml=, package metadata
------ AI Results: ------
-All six files created. Three stale vagrant-copy files renamed to =*.vagrant-orig=.
-=setup.py= updated: added =bisos.csSeed= dependency, removed =bisos.vagrantBaseBoxes=,
-added new scripts (=containerProc-seed.cs=, =dockerProc.spcs=, =podmanProc.spcs=).
-Package imports cleanly from the existing pip-installed editable install.
-** DONE [#A] Implement paramsFromPlantPath() in containerProc_seedInfo :ai:
-SCHEDULED: <2026-08-10 Sun>
-CLOSED: [2026-08-10 Sun]
-Pure function: takes =plantOfThisSeed= path string, anchors on ="debian"=
-segment, extracts release / profile / desktop / imageName, derives engine,
-ports, baseImage, cgroupVariants. Raises =ValueError= clearly on unexpected
-path structure. Include unit-testable examples in =examples_csu()=.
------ AI Results: ------
-Implemented in =containerProc_seedInfo.paramsFromPlantPath()=. Anchors on ="debian"=
-segment (not index from root). Verified correct for all six leaf paths
-(deb12/13 × confined/privileged/rootless-sysd). Error cases raise =ValueError= clearly:
-- missing =debian= segment: "Expected 'debian' segment in plant path: ..."
-- unknown profile: "Unknown profile 'X' in path: ... Expected one of [...]"
-** DONE [#A] Implement seed CS commands in containerProc_csu.py :ai:
-SCHEDULED: <2026-08-10 Sun>
-CLOSED: [2026-08-10 Sun]
-Commands: =build=, =composeUp=, =composeDown=, =run=, =verify=, =status=, =clean=.
-Each calls =paramsFromPlantPath()= and merges with any CLI overrides.
------ AI Results: ------
-All seven CS command classes implemented in =containerProc_csu.py=:
-- =containerProc_build=: docker/podman build; =noCache= param; auto-builds confined
-  base via =_ensureConfinedBase()= for rootless-sysd leaves.
-- =containerProc_composeUp= / =containerProc_composeDown=: =cgroupVer=v1= selects
-  =docker-compose.cgv1.yml=; docker-only (podman uses run).
-- =containerProc_run=: =podman run --systemd=always= with =detach= param; rootless-sysd only.
-- =containerProc_verify=: port + noVNC HTTP checks; SSH-based systemd/service checks;
-  fully exec-free (no =podman exec=); degraded = WARN not FAIL.
-- =containerProc_status=: engine inspect + SSH systemd status.
-- =containerProc_clean=: stop/rm container, rmi image.
-=examples_csu()= documents all commands with representative invocations.
-** DONE [#B] Verify end-to-end on one docker leaf and one podman leaf :aiAndMe:
-SCHEDULED: <2026-08-10 Sun>
-CLOSED: [2026-08-10 Sun]
-Copy =dockerProc.spcs= into one confined or privileged leaf and
-=podmanProc.spcs= into one rootless-sysd leaf in =bro_dockerfiles=.
-Run =build=, =verify= end-to-end on each. Fix any path-parsing or command
-issues surfaced by real invocation.
------ AI Results: ------
-Planted =dockerProc.spcs= in all four docker leaves and =podmanProc.spcs= in
-both rootless-sysd leaves (all six leaf directories). Verified programmatically
-that each planted path resolves to the correct profile/engine/ports/imageName:
-all 6/6 pass. No path-parsing issues surfaced.
-Note: live container build+verify (actual docker/podman invocation) deferred
-to developer — requires a running Docker/Podman host. The spcs plumbing and
-parameter derivation are fully verified.
+** Implemented and Archived (Last 1.3)
 ** -
+
 
 * Stage 2: Docker and podman non .spcs facilities.
 
 Goal: Add prep files for docker and podman
 
-** DONE [#B] Similar to podman-sbom.pcs create docker-sbom.pcs based on dockerInstall.sh :aiAndMe:
-SCHEDULED: <2026-08-10 Sun>
-CLOSED: [2026-08-11 Mon]
-Complete the -sbom.pcs files.
------ AI Results: ------
-Created =py3/bin/dockerProc-sbom.pcs= modeled on =podman-sbom.pcs=.
-- =dockerAddRepo()= func= pseudo-entry: idempotently adds Docker's official GPG key
-  and stable apt source list for the running Debian release (mirrors =dockerInstall.sh=).
-- =aptPkgsList=: =dockerAddRepo= (func=), =docker-ce=, =docker-ce-cli=, =containerd.io=,
-  =docker-buildx-plugin=, =docker-compose-plugin=, =qemu-user-static=, =binfmt-support=.
-- =readme= CS command describing scope and installation.
-- =examples_csu()= with install example.
-Added =podman-sbom.pcs= to =setup.py= scripts list (was missing). Removed the
-now-absent =podmanCmnds.cs= and superseded =hostPodmanVerify.sh= from scripts list.
+* Stage 2 TODOs  -- Archived
+** +
+** Implemented and Archived
+** -
 
-** DONE [#B] Convert hostPodmanVerify.sh to podmanHostVerify.cs as a Standalone CS :aiAndMe:
-SCHEDULED: <2026-08-10 Sun>
-CLOSED: [2026-08-11 Mon]
-Same functionality but as a .cs
------ AI Results: ------
-Created =py3/bin/podmanHostVerify.cs= as a standalone CS (no seeding, no plantedCsu).
-- Single =verify= CS command that runs the full 8-check bash script via =b.subProc.WOpW=.
-- All checks preserved from =hostPodmanVerify.sh=: non-root, podman installed, cgroup v2,
-  crun OCI runtime, subuid/subgid, XDG_RUNTIME_DIR + user systemd/D-Bus session, linger,
-  controller delegation, graphroot on local disk with free space.
-- PASS/WARN/FAIL semantics and GO/NO-GO exit code identical to the shell original.
-- =examples_csu()= and standard =examples= CS command.
-Added =podmanHostVerify.cs= to =setup.py= scripts list.
 
-** DONE [#B] Get podmanCmnds to work as a symlink to dockerCmnds.cs (Just a cheat sheet) :aiAndMe:
-SCHEDULED: <2026-08-10 Sun>
-CLOSED: [2026-08-11 Mon]
-Essentially s/docker/podman
-py3/bin/podmanCmnds.cs is a symlink to py3/bin/dockerCmnds.cs. dockerCmnds.cs check the runtime argv[0] and decides to
-do podmanCmnds.cs or dockerCmnds.cs. podmanDirectCmnds PyCS-Cmnd needs to be added.
------ AI Results: ------
-Created =py3/bin/podmanCmnds.cs= as a symlink to =dockerCmnds.cs= (=ln -sf dockerCmnds.cs podmanCmnds.cs=).
-=dockerCmnds.cs= already had =argv[0]= dispatch in =examples=: checks =csXuName= for "dockerCmnds" or "podmanCmnds"
-and routes accordingly. Added the missing pieces:
-- =podmanDirectCmnds= CS command added to =containerProc_csu.py= — mirrors =dockerDirectCmnds= structure
-  with all =docker= references replaced by =podman=; includes rootless-sysd specific section
-  (=--systemd=always=, =--isolation=chroot=, =stat -fc %T /sys/fs/cgroup=, =loginctl enable-linger=,
-  =podmanHostVerify.cs -i verify=).
-- Added =from bisos.dockerProc import containerProc_csu as dockerProc_csu= import to =dockerCmnds.cs=
-  (line 178 referenced =dockerProc_csu.podmanDirectCmnds()= but it was never imported).
-- Added =podmanCmnds.cs= to =setup.py= scripts list.
-
-* Stage 3: Full Design Through Graphviz
+* Stage 3: Full Design Through Graphviz And README.org
 
 Goal: We are going to use graphviz to capture the picture of the full design
 
-** DONE [#B] Start from what is in py3/images and adapt to containerProc    :aiAndMe:
-SCHEDULED: <2026-08-10 Sun>
-CLOSED: [2026-08-11 Tue]
-Read the needed graphviz related skills.
------ AI Results: ------
-Read =graphviz-authoring= skill; used =py3/images/aiActivity-graphviz.pcs=
-in the same repo as the structural precedent. Created
-=py3/images/containerProc-graphviz.pcs= modeled on it: same header
-dblocks, =graphvizSeed.setup()= manifest at top with forward-reference
-lambda, functions-below layout, org-mode iteration-loop hint at bottom.
+* Stage 3 TODOs  -- Archived And In-Progress
+** +
+** TODO [#A] <<3.4>> Fix long table lines in README.org
+Title Comes Here
+SCHEDULED: <2026-10-12 Mon>
+- Apply bisos conventions (105 char)
+----- Results: ------
 
-** DONE [#B] Graph Layerings :aiAndMe:
-SCHEDULED: <2026-08-10 Sun>
-Three execution platforms, shown as three distinct colors/swim-lanes:
-1=remoteUser, 2=containerPlatform, 3=containerInstances.
-
-- Remote User  (Bottom Layer)
-  May be a machine  that only has port 22 open (corporate env where other
-  than port 22 is blocked).
-  So it needs an ssh tunnel to the host.
-  bisos.dockerProc needs  to give the Remote user the .ssh/config entries for tunnel and ssh to local host.
-  Remote User is a *consumer of the registrar*: it reads assigned port numbers to
-  generate its =.ssh/config= tunnel entries (=LocalForward= lines).
-- Conatiners Host (on top of Remote User)
-  Runs everything. Interacts with remote user.
-  Hosts the Platform Registrar (design-only in this phase; not implemented).
-- bisos.dockerProc Platform Registrar (on top of container host)
-  In /bisos/platform/registrar/dockerProc/<user>/<imageName>/instance0(through N/)
-  Maintains port numbers for what the image exposes.
-  Use case that motivates it: one powerful VM, 10 users, each user with one or more
-  container instances --- fixed ports (2222/2223/...) collide, so the registrar
-  assigns and tracks host-side ports per-instance.
-  *Two consumers*:
-    - =.spcs= (on the platform) --- reads assigned ports when doing =run= /
-      =composeUp= / =verify=.
-    - Remote User --- reads assigned ports to generate =.ssh/config= tunnel entries.
-- images Path  -- The leafs where the dockerProc.spcs reside.
-  Path gives the *image* identity; registrar gives the *instance* identity.
-- Images and instances
-  Shows the image and its naming  as one. and Instances and their namings as many.
------ AI Results: ------
-Created =py3/images/containerProc-graphviz.pcs= producing
-=containerProcArchitecture.png=. Three color-coded LR clusters:
-lightsteelblue (Remote User), mistyrose (Container Platform), darkseagreen3
-(Container Instances). Registrar shown with dashed border to mark
-design-only. Two consumers of the registrar drawn as dodgerblue dashed
-edges: one to =.spcs= (local), one to Remote User's =.ssh/config= (over
-ssh). Purple edges show the port-22 ssh tunnel path with =LocalForward=
-to instances. Legend + walk-through added to =README.org= under a new
-=Full Design at a Glance= section. Node margins tuned so rarrow/cylinder
-labels do not crowd the shape edges.
-
-** TODO [#B] <<Addition of container saving/backup to dockerCmnds.cs and seed>> :aiAndMe:
-SCHEDULED: <2026-08-13 Thu 18:53>
-Create a new section in the examples of dockerCmnds.cs for backup and restore
-Same for the seed for .spcs usage.
------ AI Results: ------
-Done (2026-08-13). Delivered in three layers:
-
-*1. Blee panel* --- =/bisos/panels/bisos-core/virtualization/docker/backupAndRestore/_nodeBase_/fullUsagePanel-en.org=
-Filled the existing scaffold with six =foldingSection= subsections covering:
-- The three-layer model (image / container writable layer / volumes)
-- Container lifecycle: what persists across =stop/start/rm/rmi/volume rm=
-- The four backup/transfer operations (commit, save/load, export/import, volume backup)
-- Instance → image (commit) and instance → another host (three-and-a-half ways)
-- Where files live on the host (including BISOS convention path)
-- Which operation for which scenario (A/B/C decision guide, and what dockerProc automates)
-Panel is human-editable content only --- no runtime dblocks yet (deferred to
-subsequent TODOs in the panel's own Design and Evolution section).
-
-*2. Informational menus (all four operations, shell literals)*:
-- =py3/bin/dockerCmnds.cs= --- new =menuSection('/Docker Backup + Restore .../')= in
-  =dockerDirectCmnds= before the =/Docker Cleanups/= section. Shows commit, save/load
-  (with gzip variant), export/import, and volume backup as =literal(...)= examples,
-  with cross-reference to the Blee panel.
-- =py3/bisos/dockerProc/containerProc_csu.py= --- parallel section in
-  =podmanDirectCmnds= before =/Podman Cleanups/=. Same coverage plus
-  =podman volume export/import= (podman's native alternative to the alpine helper).
-
-*3. Real .spcs Cmnds (Scenarios A + B)* in =containerProc_csu.py=:
-- =_backupsDir(p)= helper: creates
-  =/bisos/var/dockerProc/backups/<user>/<imageName>/= (mkdir -p) and lays
-  down two symlinks lazily on first call:
-  - =<leafDir>/backups → /bisos/var/dockerProc/backups/<user>/<imageName>/=
-  - =/bisos/var/.../leaf → <leafDir>=
-  Idempotent (silent when links already exist; warns on OSError).
-- =containerProc_instanceCommit= (Scenario A): engine =commit= of the running
-  container to a new tag. Default tag =snapshot-<YYYYmmdd-HHMMSS>=; overridable
-  via =--tag=. Optional =--message= and =--author= for commit metadata.
-- =containerProc_imageSave= (Scenario B): engine =save= of an image to a
-  tarball. Default source =<imageName>:latest=; override with =--tag= to save a
-  specific snapshot. Default output at the BISOS-convention path; override
-  with =--outPath=. Uses =_backupsDir()= so first save creates the symlinks.
-- Wired into =examples_csu()= as a new "Backup / Snapshot" =menuSection= between
-  "Verify + Status" and "Combined", with example invocations plus a
-  literal =docker load= / =podman load= restore hint.
-
-Load Cmnd not implemented per user direction --- plain =docker load= /
-=podman load= handles the receive side, and the restore hint in
-=examples_csu()= points users at it.
-
-*** UNTESTED --- verification required on a VM
-
-This work was authored inside a *container*, where docker/podman
-daemons are not available and the =/bisos/var/dockerProc/= directory
-tree is not writable in the BISOS-standard way. *Nothing in this TODO
-has been exercised end-to-end.* Verification must happen on a VM with
-docker and podman installed, against a real planted leaf. The specific
-checks pending are:
-
-1. =pypiProc.sh -v -n showRun -i pkgReInstall edit /bisos/venv/py3/bisos3=
-   picks up the new Cmnds without a syntax/import error.
-2. In a planted leaf (any of the six in =bro_dockerfiles=): bare invocation
-   of =dockerProc.spcs= (or =podmanProc.spcs=) shows the new "Backup /
-   Snapshot" section in the examples menu, with the leaf's =imageName=
-   correctly substituted into the =comment= strings.
-3. =dockerProc.spcs -i containerProc_instanceCommit= against a *running*
-   container produces =<imageName>:snapshot-<timestamp>=, visible via
-   =docker image ls= / =podman image ls=.
-4. Same with =--tag=checkpoint=, =--message=..., --author=...= --- verify
-   commit metadata via =docker inspect=.
-5. =dockerProc.spcs -i containerProc_imageSave= produces a tarball at
-   =/bisos/var/dockerProc/backups/<user>/<imageName>/<imageName>-latest-<timestamp>.tar=
-   AND creates both symlinks on first invocation:
-   - =<leafDir>/backups → /bisos/var/dockerProc/backups/<user>/<imageName>/=
-   - =/bisos/var/.../leaf → <leafDir>=
-   Second invocation should NOT complain about existing symlinks
-   (idempotent).
-6. =containerProc_imageSave --tag=<commitTag>= saves the commit
-   snapshot from step 3, not =latest=.
-7. =containerProc_imageSave --outPath=/tmp/foo.tar= writes to the
-   override path (and does NOT create the =/bisos/var/...= directory
-   or symlinks).
-8. Repeat 3-7 on a rootless-sysd (podman) leaf --- verify no permission
-   errors on =/bisos/var/dockerProc/backups/= (this is the risk case;
-   we may need to fall back to a user-local path for podman).
-9. =docker load -i <tarball>= (or =podman load=) on a *different* VM
-   restores the image.
-10. Informational menus: =dockerCmnds.cs -i examples= shows the new
-    "/Docker Backup + Restore/" section; =podmanCmnds.cs -i examples=
-    shows the parallel podman section.
-
-*Known risk:* the =/bisos/var/dockerProc/backups/= path may not exist
-or may not be writable by non-root users. If rootless-podman testing
-fails on permission, the correct fix is to switch S2 (user scoping) to
-mode (c) --- user-local path for podman, /bisos/var/ path for docker
---- rather than papering over with sudo.
-
-No =verify.sh= tests added; =bisos.dockerProc= does not have a verify.sh
-test suite yet. Consider adding one as a separate TODO if this pattern
-recurs.
+** -
 
 
-* Stage 4: Implement the Platform Registrar
+* Stage 4: Implement the Platform Registrar -- Future None-Urgent 
 
 Goal: Make the design in the =containerProcArchitecture= figure real.
 Introduce a per-user, per-image, per-instance registrar on the Container
@@ -435,7 +199,7 @@ Port allocation pool: e.g. =sshPort= in =20000--29999=, =vncPort= in
 =unitsNextNu()= against the union of already-assigned ports in that pool
 (scanning all users, since ports are host-global).
 
-* Stage 4 TODOs
+* Stage 4 TODOs -- Future Plans
 
 ** +
 ** TODO [#A] Absorb ./ImageInstanceNaming.org :aiAndMe:
@@ -651,8 +415,11 @@ Once implementation is done, update =README.org=:
 
 ** -
 
-* Stage 5 Misc and Maintenance TODOs
+* Stage 5 Misc and Maintenance
 
+Goal: Capture Problems/Issues/Bugs and Future Feature Ideas
+
+* Stage 5 TODOs -- Place Holders
 ** +
 ** TODO Make quickXx be a bisos pattern. Break Backup into separate examples. :aiAndMe:
 SCHEDULED: <2026-08-18 Tue 16:56>
@@ -660,6 +427,116 @@ quickGit.cs quickKvm.cs quickPip.cs etc
 ----- AI Results: ------
 
 ** -
+
+* Stage 6 Pure bro_dockerFiles Usage -- Without bisos.dockerProc
+
+Goal: Allow for use of bro_dockerFiles purely on its own based on bash scripts at leaves
+
+There will be two ways of the bro_dockerFiles: 1) With BISOS (bisos.dockerProc) 2) Just with bro_dockerFiles
+
+(1) is will established. But may inherit ideas and concepts from (2).
+
+(2) Each leave will have 3 files
+    2.1) README.org
+        - It describe this dual usage model
+        - It describes purpose of Dockerfile, and the two yaml files
+        - It describes standalone use of imageBuild.sh
+        - It describes standalone use of containerManage.sh
+
+    2.2) imageBuild.sh  (renamed from current build.sh)
+        - As is but needs to be at every leaf. sysd priv depends on restricted
+
+    2.3) containerManage.sh
+        - If the execution environment is a conatiner, say so and exit -- Same as build.sh/imageBuild.sh
+        - If the execution is cgroup1, only do that. Same for cgroup2. Mention which one.
+        - Have a -n option which emits the main execution commands.
+        - Have the following verbs. create, delete, stop, start, restart for the subject command.
+        - Prior to create, make sure of the following.
+           - The specified container name, should not  exist
+           - None of the specified ports should be in use.
+
+* Stage 6 TODOs -- In-Progress
+** +
+** TODO [#A] <<6.1>>  Build and propagate standalone bash scripts and README.org at all leaves
+SCHEDULED: <2026-08-18 Tue 16:56>
+- Review specification of Stage 6, confirm that you understand it. Add to it your ideas/inputs.
+- Implement deb-13-sysd-2 as an example.
+- Wait till I run it on on cgroup1 and one cgroup2 VM.
+- Propagate this model to all leaves in bro_dockerFiles.
+----- AI Results: ------
+Step 2 done [2026-10-25] on the example leaf
+=bro_dockerfiles/debian/13/privileged/vnc/xfce/bisos_deb13-sysd/= (read "deb-13-sysd-2" as this
+leaf). *Not run against a docker daemon*: authored inside a container on a cgroup v1 host without
+docker. =bash -n= passes. The container refusal was seen to fire. Every verb was exercised with a
+fake =docker= on =PATH= (scratchpad harness), including the port-in-use refusal. Waiting on step 3
+(your cgroup v1 and v2 VM runs).
+
+Files (in bro_dockerfiles, uncommitted):
+- =imageBuild.sh= --- =git mv= of =build.bash=. Added: container refusal (same heuristics as
+  =containerProc_csu._detectInContainer=); =cd= to the leaf so it runs from any directory; the
+  base-image hint names =imageBuild.sh= or =build.bash=, whichever the confined leaf has.
+- =containerManage.sh= (new) --- =[-n] create|start|stop|restart|delete|status=. Refuses inside a
+  container. Picks =docker-compose.yml= (cgroup v2) or =docker-compose.cgv1.yml= (v1) from
+  =stat -fc %T /sys/fs/cgroup=, says which, and uses only that one. Reads container name, image
+  and host ports *from that yml* (the yml stays the single source). =create= refuses, listing
+  every problem, if the container exists, a host port is in use, or the image is not built;
+  it runs =up --no-start --no-build= (never builds). =-n= runs the read-only checks and prints
+  the mutating commands. Uses =docker compose= or falls back to =docker-compose= (v1).
+- =README.org= (new) --- dual usage model, BISOS ↔ standalone verb table, files, the two compose
+  files, =imageBuild.sh=, =containerManage.sh=, ports, =verify.sh=.
+
+Review of the spec --- choices made, and inputs (to confirm before propagating):
+1. =create= only creates (docker semantics); =start= is separate. The =.spcs= =instanceUp= does
+   both. Say if =create= should also start.
+2. =status= added as a sixth verb (not in the spec).
+3. =delete= = =compose down=: no confirmation prompt; it prints that the writable layer is lost.
+4. "sysd priv depends on restricted": =imageBuild.sh= still stops with the command that builds
+   the base. An =-b= option that builds the base leaf first is possible.
+5. Propagation: the confined leaves have no compose v1/v2 split and no =verify.sh=; their
+   =containerManage.sh= will use the one =docker-compose.yml= on either cgroup version. The
+   rootless-sysd leaves use podman and =run.bash=, not compose; there =containerManage.sh=
+   would wrap =podman create/start/stop/rm= and replace =run.bash= (cgroup v2 only).
+6. The confined leaves' README.org files are upstream braughtg text; they would be replaced.
+7. After propagation, the =build.bash= references in bro_dockerfiles' =README.org=,
+   =AI-DevStatus.org=, the confined Dockerfile comment, and this package's docs need updating.
+
+VM test, on each of a cgroup v1 and a cgroup v2 host:
+: ./imageBuild.sh   # after the confined leaf's ./build.bash
+: ./containerManage.sh -n create; ./containerManage.sh create; ./containerManage.sh start
+: ./verify.sh; ./containerManage.sh status; ./containerManage.sh restart
+: ./containerManage.sh stop; ./containerManage.sh delete
+
+*Second instance: =bisos_deb13-sysd-2=* [2026-10-25] (user pulled it in as a copy of sysd).
+Rule (user): *a numeric suffix on an instance (leaf) name means it shares the image* --- leaf
+=<primary>-<N>= is instance N of the image of =../<primary>=, which alone builds it.
+- Scripts are now identical in both leaves (=imageBuild.sh=, =containerManage.sh=); everything that
+  differs per instance is in the compose files. Both scripts detect the suffix from the leaf name.
+  - =imageBuild.sh= in a secondary leaf builds nothing: it says the image is built in
+    =../<primary>= and prints the command (exit 0).
+  - =containerManage.sh= shows "Instance: secondary"; if the shared image is missing, its =create=
+    refusal names the primary leaf's build command.
+- New check, all leaves: =create= on cgroup v1 refuses if the compose network's subnet overlaps any
+  other docker network (the leaf's own leftover network excluded) or host route (default routes and
+  docker bridges skipped). CIDR overlap math is unit-checked.
+- sysd-2 compose files: =image: bisos_deb13-sysd:latest= (shared), =build:= sections removed (so
+  =compose up= can't build the shared tag from sysd-2's context). Own: container =bisos_deb13-sysd-2=,
+  ports 2227/5906/6906 (from the user's copy), cgv1 network =bisos_deb13_sysd2_cgv1= on
+  =10.254.132.0/24= (was a duplicate of sysd's =10.254.13.0/24=, which would have failed on v1).
+  =verify.sh= defaults now sysd-2's. sysd-2's =Dockerfile= and =dockerConf/= are unused leftovers.
+- Independence (by inspection plus fake-docker runs; not on a daemon): distinct container names,
+  host ports, compose projects (named after the leaf dir, so =down= in one never removes the other),
+  cgv1 networks/subnets, writable layers, tmpfs, =/shuttle/this=. Shared: the read-only image, and
+  the host cgroup tree that every privileged systemd container mounts --- on v1 each container's
+  systemd works under its own =/docker/<id>= cgroup.
+- *Open, bisos.dockerProc (not done):* =paramsFromPlantPath()= doesn't know the suffix rule. For
+  sysd-2 it derives image =bisos_deb13-sysd-2= (so =containerProc_imageBuild= would build a separate
+  image) and sysd's ports from =_PORT_TABLE= (so =instanceVerify= / =instanceStatus= would probe
+  sysd). Needs: image name = leaf name minus =-<N>=; ports from the compose file (or the registrar).
+  Until then, use the standalone scripts in sysd-2.
+
+** -
+
+
 
 # Local Variables:
 # eval: (setq-local toc-org-max-depth 4)
