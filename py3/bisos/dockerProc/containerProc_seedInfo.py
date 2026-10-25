@@ -72,6 +72,9 @@ _PORT_TABLE: dict[tuple[str, Profile], dict[str, int]] = {
     ("13", Profile.RootlessSysd):  {"ssh": 2226, "vnc": 5905, "novnc": 6905},
 }
 
+# 13-2 -- 2227  5906 6906
+
+
 _BASE_IMAGE_TABLE: dict[tuple[str, Profile], str] = {
     ("12", Profile.Confined):     "bisos_deb12-fresh:latest",
     ("12", Profile.Privileged):   "bisos_deb12-fresh:latest",
