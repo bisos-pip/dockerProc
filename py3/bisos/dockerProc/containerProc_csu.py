@@ -17,6 +17,7 @@ csInfo['status']  = 'inDev'
 import typing
 import subprocess
 import pathlib
+import shutil
 
 from bisos import b
 from bisos.b import cs
@@ -25,6 +26,7 @@ from bisos.b import b_io
 import collections
 
 from bisos.dockerProc import containerProc_seedInfo
+from bisos.fileObj import ftoLeaf_seedInfo
 
 
 ###############################################################################
@@ -79,8 +81,37 @@ def _refuseIfInContainer() -> None:
         )
 
 
-def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
+def _isCgroupV2() -> bool:
+    """True on a cgroup v2 (unified) host. Same test as 'stat -fc %T /sys/fs/cgroup' == cgroup2fs:
+    only the unified hierarchy has cgroup.controllers at its root (v1 and hybrid do not)."""
+    return pathlib.Path('/sys/fs/cgroup/cgroup.controllers').exists()
+
+
+def _refuseIfCgroupV1() -> None:
+    """Raise RuntimeError on a cgroup v1 (or hybrid) host.
+
+    bisos.dockerProc supports cgroup v2 hosts only; cgroup v1 is considered
+    obsolete here. The leaves' standalone scripts (imageBuild.sh,
+    containerManage.sh) still support cgroup v1, through each privileged
+    leaf's docker-compose.cgv1.yml.
+    """
+    if not _isCgroupV2():
+        raise RuntimeError(
+            "Refusing to run: this host is on cgroup v1 (or hybrid); /sys/fs/cgroup is not "
+            "cgroup2fs. bisos.dockerProc supports cgroup v2 hosts only. On a cgroup v1 host, "
+            "use the leaf's standalone ./imageBuild.sh and ./containerManage.sh instead "
+            "(privileged leaves run there through docker-compose.cgv1.yml)."
+        )
+
+
+def _refuseIfUnsupportedHost() -> None:
+    """Every engine-driving command runs only on a cgroup v2 host, not inside a container."""
     _refuseIfInContainer()
+    _refuseIfCgroupV1()
+
+
+def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
+    _refuseIfUnsupportedHost()
     b_io.ann.note(f"Running: {' '.join(cmd)}")
     try:
         return subprocess.run(cmd, check=check)
@@ -96,8 +127,83 @@ def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
 
 
 ###############################################################################
+# Instance checks --- the same checks as the leaves' standalone
+# containerManage.sh, so that both ways refuse the same things.
+###############################################################################
+
+def _engineProblem(engine: str) -> str | None:
+    """None if the engine is installed and usable by this user, else why not."""
+    if shutil.which(engine) is None:
+        return (f"{engine} is not installed on this host. Install it with "
+                f"'{'dockerProc' if engine == 'docker' else 'podman'}-sbom.pcs -i sbom_apt_install'.")
+    if subprocess.run([engine, 'info'], capture_output=True, check=False).returncode != 0:
+        if engine == 'docker':
+            return ("cannot talk to the docker daemon. Is it running? Are you in the docker "
+                    "group (or do you need sudo)?")
+        return "'podman info' fails for this user; rootless podman is not usable here."
+    return None
+
+
+def _containerState(engine: str, name: str) -> str | None:
+    """The container's state (running, exited, created, ...), or None if it does not exist."""
+    r = subprocess.run(
+        [engine, 'container', 'inspect', '-f', '{{.State.Status}}', name],
+        capture_output=True, text=True, check=False,
+    )
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _imageExists(engine: str, image: str) -> bool:
+    return subprocess.run(
+        [engine, 'image', 'inspect', image], capture_output=True, check=False,
+    ).returncode == 0
+
+
+def _hostPortInUse(port: int) -> bool:
+    """True if something on the host listens on TCP <port> (any address)."""
+    r = subprocess.run(['ss', '-ltnH'], capture_output=True, text=True, check=False)
+    for line in r.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 4 and fields[3].rsplit(':', 1)[-1] == str(port):
+            return True
+    return False
+
+
+def _hostPorts(p: containerProc_seedInfo.ContainerParams) -> list[int]:
+    return [p.sshPort, p.vncPort, p.novncPort]
+
+
+def _spcsName(p: containerProc_seedInfo.ContainerParams) -> str:
+    return pathlib.Path(p.plantPath).name
+
+
+def _reportProblems(cmndOutcome: b.op.Outcome, what: str, problems: list[str]) -> b.op.Outcome:
+    """Report every problem, then fail the command without changing anything."""
+    for problem in problems:
+        b_io.ann.note(f"PROBLEM: {problem}")
+    b_io.ann.note(f"ERROR: not {what}.")
+    return cmndOutcome.set(opError=b.op.OpError.Failure, opResults=f"not {what}: {problems}")
+
+
+def _requireInstance(
+    cmndOutcome: b.op.Outcome,
+    p: containerProc_seedInfo.ContainerParams,
+    what: str,
+) -> b.op.Outcome | None:
+    """None if the engine is usable and the instance exists; else a failed outcome."""
+    engine = p.engine.value
+    if (problem := _engineProblem(engine)) is not None:
+        return _reportProblems(cmndOutcome, what, [problem])
+    if _containerState(engine, p.containerName) is None:
+        return _reportProblems(cmndOutcome, what, [
+            f"container {p.containerName} does not exist. "
+            f"Run: ./{_spcsName(p)} -i containerProc_instanceUp"])
+    return None
+
+
+###############################################################################
 # commonParamsSpecify --- registers CS parameters used by the containerProc_*
-# commands with the PyCS argparse layer. Without this, --noCache / --cgroupVer /
+# commands with the PyCS argparse layer. Without this, --noCache /
 # --detach / --localBuild are rejected as "unrecognized arguments" even though
 # the Cmnd classes declare them in cmndParamsOptional.
 ###############################################################################
@@ -122,15 +228,6 @@ def commonParamsSpecify(
         parChoices=["any"],
         argparseShortOpt=None,
         argparseLongOpt='--noCache',
-    )
-    csParams.parDictAdd(
-        parName='cgroupVer',
-        parDescription="Host cgroup version selector for docker compose: 'v1' or 'v2'.",
-        parDataType=None,
-        parDefault=None,
-        parChoices=["v1", "v2"],
-        argparseShortOpt=None,
-        argparseLongOpt='--cgroupVer',
     )
     csParams.parDictAdd(
         parName='detach',
@@ -194,6 +291,15 @@ class containerProc_imageBuild(cs.Cmnd):
         leafDir = pathlib.Path(p.plantPath).parent
         noCacheFlag = ['--no-cache'] if noCache else []
 
+        if p.isSecondary:
+            b_io.ann.note(f"{p.leafName} is an instance of the image of ../{p.primaryLeaf}; "
+                          f"it has no image of its own. Build it there: "
+                          f"( cd ../{p.primaryLeaf} && ./{_spcsName(p)} -i containerProc_imageBuild )")
+            return cmndOutcome.set(opError=b.op.OpError.Success,
+                                   opResults=f"No image of its own: built in ../{p.primaryLeaf}")
+        _refuseIfUnsupportedHost()
+        _copyRawBisosIfNeeded(leafDir)
+
         if p.engine == containerProc_seedInfo.Engine.Podman:
             # rootless-sysd: ensure confined base is present, then build
             _ensureConfinedBase(p, leafDir, noCacheFlag)
@@ -236,9 +342,40 @@ class containerProc_imageDelete(cs.Cmnd):
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
+        if p.isSecondary:
+            b_io.ann.note(f"{p.leafName} has no image of its own; the shared image "
+                          f"{p.imageName} is left alone (delete it in ../{p.primaryLeaf}).")
+            return cmndOutcome.set(opError=b.op.OpError.Success,
+                                   opResults=f"No image of its own: {p.leafName}")
         engine = p.engine.value
         _run([engine, 'rmi', p.imageName], check=False)
         return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Image deleted: {p.imageName}")
+
+
+_RAW_BISOS_COPY_RE = r'^COPY.*\s\./raw-bisos(\s|$)'
+
+
+def _copyRawBisosIfNeeded(contextDir: pathlib.Path) -> None:
+    """Copy bro_dockerfiles/common/raw-bisos into a build context whose Dockerfile COPYs it.
+
+    Same step as the leaves' standalone imageBuild.sh: the confined Dockerfile does
+    'COPY ./raw-bisos ...', and the single canonical copy is common/raw-bisos (six
+    levels up from a leaf). Removed first, so a repeat copy does not nest.
+    """
+    import re
+    dockerfile = contextDir / 'Dockerfile'
+    if not dockerfile.is_file() or not re.search(_RAW_BISOS_COPY_RE, dockerfile.read_text(), re.M):
+        return
+    source = contextDir.parents[5] / 'common' / 'raw-bisos'
+    if not source.is_dir():
+        raise RuntimeError(f"Missing Raw-BISOS payload directory: {source}")
+    target = contextDir / 'raw-bisos'
+    if target.is_symlink() or target.is_file():
+        target.unlink()
+    elif target.is_dir():
+        shutil.rmtree(target)
+    shutil.copytree(source, target)
+    b_io.ann.note(f"Copied {source} -> {target}")
 
 
 def _ensureConfinedBase(
@@ -255,6 +392,7 @@ def _ensureConfinedBase(
         # Infer confined base context: ../../../../confined/vnc/xfce/<baseName>
         baseContext = leafDir.parents[3] / 'confined' / 'vnc' / 'xfce' / f'bisos_deb{p.release}-fresh'
         b_io.ann.note(f"Base image {p.baseImage} missing — building from {baseContext}")
+        _copyRawBisosIfNeeded(baseContext)
         _run(
             ['podman', 'build', '--isolation=chroot']
             + noCacheFlag
@@ -267,18 +405,95 @@ def _ensureConfinedBase(
 # Anticipate Stage 4 Platform Registrar: will gain --instance=N arg later.
 ###############################################################################
 
+def _instanceUp(
+    cmndOutcome: b.op.Outcome,
+    p: containerProc_seedInfo.ContainerParams,
+    detach: bool = False,
+    start: bool = True,
+) -> b.op.Outcome:
+    """Check, then create (if needed) and --- unless start=False --- start the instance.
+
+    The body of containerProc_instanceUp. start=False creates without starting
+    (docker compose up --no-start; podman create), for reMaterialize, which puts
+    the VNC password back before the first start. A new podman container is
+    always detached when start=False is followed by a separate start.
+    """
+    engine = p.engine.value
+    leafDir = pathlib.Path(p.plantPath).parent
+    composeFile = leafDir / 'docker-compose.yml'
+
+    if (problem := _engineProblem(engine)) is not None:
+        return _reportProblems(cmndOutcome, f"starting {p.containerName}", [problem])
+
+    state = _containerState(engine, p.containerName)
+    if state == 'running':
+        b_io.ann.note(f"Container {p.containerName} is already running; nothing to do.")
+        return cmndOutcome.set(opError=b.op.OpError.Success,
+                               opResults=f"Already running: {p.containerName}")
+
+    problems: list[str] = []
+    if p.engine == containerProc_seedInfo.Engine.Docker and not composeFile.is_file():
+        problems.append(f"{composeFile} is missing.")
+    if not _imageExists(engine, p.imageName):
+        build = (f"( cd ../{p.primaryLeaf} && ./{_spcsName(p)} -i containerProc_imageBuild )"
+                 if p.isSecondary else f"./{_spcsName(p)} -i containerProc_imageBuild")
+        problems.append(f"image {p.imageName} is not in {engine}'s local store. Run: {build}")
+    for port in _hostPorts(p):
+        if _hostPortInUse(port):
+            problems.append(f"host port {port} is already in use.")
+    if problems:
+        return _reportProblems(cmndOutcome, f"starting {p.containerName}", problems)
+
+    if p.engine == containerProc_seedInfo.Engine.Docker:
+        # --no-build: building is containerProc_imageBuild's job, never a side effect here.
+        upFlags = ['-d'] if start else ['--no-start']
+        _run(['docker', 'compose', '-f', str(composeFile), 'up', *upFlags, '--no-build'])
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Up: {composeFile.name}")
+
+    # podman rootless-sysd
+    if state is not None:
+        if start:
+            _run(['podman', 'start', p.containerName])
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Started {p.containerName}")
+    verb = (['run', '-d'] if detach else ['run']) if start else ['create']
+    cmd = (
+        ['podman', *verb, '--pids-limit=16384', '--systemd=always',
+         '--stop-signal', 'SIGRTMIN+3']
+        + [
+            '--name', p.containerName,
+            '-p', f'{p.sshPort}:22',
+            '-p', f'{p.vncPort}:5901',
+            '-p', f'{p.novncPort}:6901',
+            '-v', f'{leafDir}:/shuttle/this',
+            p.imageName,
+        ]
+    )
+    _run(cmd)
+    return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Started {p.containerName}")
+
+
 class containerProc_instanceUp(cs.Cmnd):
-    """Create and start the container instance for this leaf.
+    """Create (if needed) and start the container instance for this leaf.
 
     Dispatches on p.engine:
-      - docker → 'docker compose up -d' with the leaf's compose file.
-      - podman → 'podman run --systemd=always -d --name <img> -p ...'.
+      - docker → 'docker compose up -d --no-build' with the leaf's docker-compose.yml.
+      - podman → 'podman run --systemd=always --name <img> -p ...' for a new
+        container, 'podman start <img>' for an existing stopped one.
 
-    For docker leaves, cgroupVer='v1' selects docker-compose.cgv1.yml.
-    For podman leaves, detach='true' runs detached (default is foreground).
+    Already running: says so and changes nothing. Otherwise first checks, as the
+    leaf's standalone containerManage.sh does before create, and if any check
+    fails reports every problem and changes nothing:
+      - the engine is installed and usable;
+      - (docker) the leaf has a docker-compose.yml;
+      - the image has been built (never built here: --no-build);
+      - none of the instance's host ports is in use.
+    cgroup v2 hosts only.
+
+    For podman leaves, detach='true' runs a new container detached (default is
+    foreground).
     """
     cmndParamsMandatory = []
-    cmndParamsOptional = ['cgroupVer', 'detach']
+    cmndParamsOptional = ['detach']
     cmndArgsLen = {'Min': 0, 'Max': 0}
 
     @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
@@ -286,41 +501,17 @@ class containerProc_instanceUp(cs.Cmnd):
         self,
         rtInv: cs.RtInvoker,
         cmndOutcome: b.op.Outcome,
-        cgroupVer: typing.Optional[str] = None,
         detach: typing.Optional[str] = None,
         argsList: typing.Optional[list[str]] = None,
     ) -> b.op.Outcome:
-        """Create + start instance. Dispatches on p.engine."""
-        callParamsDict = {'cgroupVer': cgroupVer, 'detach': detach}
+        """Check, then create + start instance. Dispatches on p.engine."""
+        callParamsDict = {'detach': detach}
         if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
-        if p.engine == containerProc_seedInfo.Engine.Docker:
-            leafDir = pathlib.Path(p.plantPath).parent
-            composeFile = (
-                'docker-compose.cgv1.yml'
-                if cgroupVer == 'v1'
-                else 'docker-compose.yml'
-            )
-            _run(['docker', 'compose', '-f', str(leafDir / composeFile), 'up', '-d'])
-            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Up: {composeFile}")
-        else:
-            # podman rootless-sysd
-            detachFlag = ['-d'] if detach else []
-            cmd = (
-                ['podman', 'run', '--pids-limit=16384', '--systemd=always']
-                + detachFlag
-                + [
-                    '--name', p.imageName,
-                    '-p', f'{p.sshPort}:22',
-                    '-p', f'{p.vncPort}:5901',
-                    '-p', f'{p.novncPort}:6901',
-                    p.imageName,
-                ]
-            )
-            _run(cmd)
-            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Started {p.imageName}")
+        _refuseIfUnsupportedHost()
+        return _instanceUp(cmndOutcome, p, detach=bool(detach))
 
 
 class containerProc_instanceDown(cs.Cmnd):
@@ -330,10 +521,10 @@ class containerProc_instanceDown(cs.Cmnd):
       - docker → 'docker compose stop' (stop only; container still exists).
       - podman → 'podman stop' (stop only; container still exists).
 
-    For docker leaves, cgroupVer='v1' selects docker-compose.cgv1.yml.
+    Fails, changing nothing, if the instance does not exist.
     """
     cmndParamsMandatory = []
-    cmndParamsOptional = ['cgroupVer']
+    cmndParamsOptional = []
     cmndArgsLen = {'Min': 0, 'Max': 0}
 
     @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
@@ -341,41 +532,38 @@ class containerProc_instanceDown(cs.Cmnd):
         self,
         rtInv: cs.RtInvoker,
         cmndOutcome: b.op.Outcome,
-        cgroupVer: typing.Optional[str] = None,
         argsList: typing.Optional[list[str]] = None,
     ) -> b.op.Outcome:
         """Stop instance. Dispatches on p.engine."""
-        callParamsDict = {'cgroupVer': cgroupVer}
+        callParamsDict = {}
         if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
+        _refuseIfUnsupportedHost()
+        if (failed := _requireInstance(cmndOutcome, p, f"stopping {p.containerName}")) is not None:
+            return failed
         if p.engine == containerProc_seedInfo.Engine.Docker:
-            leafDir = pathlib.Path(p.plantPath).parent
-            composeFile = (
-                'docker-compose.cgv1.yml'
-                if cgroupVer == 'v1'
-                else 'docker-compose.yml'
-            )
-            _run(['docker', 'compose', '-f', str(leafDir / composeFile), 'stop'])
-            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Stopped: {composeFile}")
+            composeFile = pathlib.Path(p.plantPath).parent / 'docker-compose.yml'
+            _run(['docker', 'compose', '-f', str(composeFile), 'stop'])
+            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Stopped: {composeFile.name}")
         else:
             # podman: stop (does not rm; use instanceDelete for stop+rm)
-            _run(['podman', 'stop', p.imageName], check=False)
-            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Stopped {p.imageName}")
+            _run(['podman', 'stop', p.containerName])
+            return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Stopped {p.containerName}")
 
 
 class containerProc_instanceDelete(cs.Cmnd):
     """Stop and remove the container instance (image is preserved).
 
     Dispatches on p.engine:
-      - docker → 'docker compose down' removes the instance.
+      - docker → 'docker compose down' removes the instance (and its network).
       - podman → 'podman stop && podman rm' (in sequence).
 
-    For docker leaves, cgroupVer='v1' selects docker-compose.cgv1.yml.
+    The instance's writable layer is lost. Nothing to do if it does not exist.
     """
     cmndParamsMandatory = []
-    cmndParamsOptional = ['cgroupVer']
+    cmndParamsOptional = []
     cmndArgsLen = {'Min': 0, 'Max': 0}
 
     @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
@@ -383,35 +571,48 @@ class containerProc_instanceDelete(cs.Cmnd):
         self,
         rtInv: cs.RtInvoker,
         cmndOutcome: b.op.Outcome,
-        cgroupVer: typing.Optional[str] = None,
         argsList: typing.Optional[list[str]] = None,
     ) -> b.op.Outcome:
         """Stop + remove instance. Dispatches on p.engine."""
-        callParamsDict = {'cgroupVer': cgroupVer}
+        callParamsDict = {}
         if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
-        if p.engine == containerProc_seedInfo.Engine.Docker:
-            # 'docker compose down' already stops + removes.
-            leafDir = pathlib.Path(p.plantPath).parent
-            composeFile = (
-                'docker-compose.cgv1.yml'
-                if cgroupVer == 'v1'
-                else 'docker-compose.yml'
-            )
-            _run(['docker', 'compose', '-f', str(leafDir / composeFile), 'down'])
-            return cmndOutcome.set(opError=b.op.OpError.Success,
-                                   opResults=f"Instance deleted: {composeFile}")
-        else:
-            _run(['podman', 'stop', p.imageName], check=False)
-            _run(['podman', 'rm', p.imageName], check=False)
-            return cmndOutcome.set(opError=b.op.OpError.Success,
-                                   opResults=f"Instance deleted: {p.imageName}")
+        _refuseIfUnsupportedHost()
+        return _instanceDelete(cmndOutcome, p)
+
+
+def _instanceDelete(
+    cmndOutcome: b.op.Outcome,
+    p: containerProc_seedInfo.ContainerParams,
+) -> b.op.Outcome:
+    """The body of containerProc_instanceDelete (also used by reMaterialize / unMaterialize)."""
+    engine = p.engine.value
+    if (problem := _engineProblem(engine)) is not None:
+        return _reportProblems(cmndOutcome, f"deleting {p.containerName}", [problem])
+    if _containerState(engine, p.containerName) is None:
+        b_io.ann.note(f"Container {p.containerName} does not exist; nothing to delete.")
+        return cmndOutcome.set(opError=b.op.OpError.Success,
+                               opResults=f"No instance: {p.containerName}")
+    b_io.ann.note("NOTE: deleting loses the container's writable layer; the image is kept.")
+    if p.engine == containerProc_seedInfo.Engine.Docker:
+        # 'docker compose down' already stops + removes.
+        composeFile = pathlib.Path(p.plantPath).parent / 'docker-compose.yml'
+        _run(['docker', 'compose', '-f', str(composeFile), 'down'])
+        return cmndOutcome.set(opError=b.op.OpError.Success,
+                               opResults=f"Instance deleted: {composeFile.name}")
+    _run(['podman', 'stop', p.containerName], check=False)
+    _run(['podman', 'rm', p.containerName])
+    return cmndOutcome.set(opError=b.op.OpError.Success,
+                           opResults=f"Instance deleted: {p.containerName}")
 
 
 class containerProc_instanceRestart(cs.Cmnd):
-    """Restart the container instance in place (stop + start; state preserved)."""
+    """Restart the container instance in place (stop + start; state preserved).
+
+    Fails, changing nothing, if the instance does not exist.
+    """
     cmndParamsMandatory = []
     cmndParamsOptional = []
     cmndArgsLen = {'Min': 0, 'Max': 0}
@@ -429,9 +630,129 @@ class containerProc_instanceRestart(cs.Cmnd):
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
+        _refuseIfUnsupportedHost()
+        if (failed := _requireInstance(cmndOutcome, p, f"restarting {p.containerName}")) is not None:
+            return failed
         engine = p.engine.value
-        _run([engine, 'restart', p.imageName])
-        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Restarted {p.imageName}")
+        _run([engine, 'restart', p.containerName])
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"Restarted {p.containerName}")
+
+
+###############################################################################
+# VNC password --- optional. No password is the default: no (or an empty)
+# password file in the container. /usr/local/bin/vncStart.sh in the image reads
+# it at each VNC start. Same file and steps as the leaves' standalone
+# containerManage.sh vncPassword set|clear.
+###############################################################################
+
+_VNC_PASSWD_PATH = '/home/bystar/.config/bisosVncPasswd'
+
+
+def _vncAuthMode(engine: str, name: str) -> str:
+    """'password' if the container holds a non-empty VNC password file, else 'none'.
+
+    Read with 'cp <container>:<path> -' (a tar stream), which works on a stopped container.
+    """
+    import io
+    import tarfile
+    r = subprocess.run([engine, 'cp', f'{name}:{_VNC_PASSWD_PATH}', '-'],
+                       capture_output=True, check=False)
+    if r.returncode != 0 or not r.stdout:
+        return 'none'
+    try:
+        with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tar:
+            member = tar.next()
+            return 'password' if member is not None and member.size > 0 else 'none'
+    except tarfile.TarError:
+        return 'none'
+
+
+class containerProc_instanceVncPassword(cs.Cmnd):
+    """Set or clear the instance's VNC password. No password is the default.
+
+    Args: =set= or =clear=.
+      - set: asks for the password (twice, not echoed), makes the password file with
+        the image's own =vncpasswd -f= in a throw-away container, copies it in.
+      - clear: copies in an empty file --- back to no password.
+    A running instance is restarted so that VNC uses the new setting. The password is
+    lost on instanceDelete. Only its first 8 characters count, and VNC traffic is not
+    encrypted: across a network, use an SSH tunnel.
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = []
+    cmndArgsLen = {'Min': 1, 'Max': 1}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """set | clear the VNC password of this leaf's instance."""
+        callParamsDict = {}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        action = (argsList or [''])[0]
+        p = _params()
+        what = f"changing the VNC password of {p.containerName}"
+        if action not in ('set', 'clear'):
+            return _reportProblems(cmndOutcome, what, [f"argument must be set or clear, not {action!r}"])
+        _refuseIfUnsupportedHost()
+        if (failed := _requireInstance(cmndOutcome, p, what)) is not None:
+            return failed
+        engine = p.engine.value
+        image = f"{p.imageName}:latest"
+
+        # An image built before VNC passwords existed would ignore the file.
+        hasVncStart = subprocess.run(
+            [engine, 'run', '--rm', '--network', 'none', '--entrypoint', 'test',
+             image, '-x', '/usr/local/bin/vncStart.sh'],
+            capture_output=True, check=False,
+        ).returncode == 0
+        if not hasVncStart:
+            return _reportProblems(cmndOutcome, what, [
+                f"image {image} has no /usr/local/bin/vncStart.sh, so it would ignore a VNC "
+                f"password. Rebuild it (./{_spcsName(p)} -i containerProc_imageBuild, its "
+                f"confined base first), then instanceDelete + instanceUp."])
+
+        import getpass
+        import tempfile
+        content = b''
+        if action == 'set':
+            pw1 = getpass.getpass("New VNC password: ")
+            pw2 = getpass.getpass("Same password again: ")
+            if not pw1:
+                return _reportProblems(cmndOutcome, what, [
+                    "empty password. For no password: containerProc_instanceVncPassword clear"])
+            if pw1 != pw2:
+                return _reportProblems(cmndOutcome, what, ["the two passwords differ; nothing changed."])
+            if len(pw1) > 8:
+                b_io.ann.note("NOTE: VNC uses only the first 8 characters of the password.")
+            # The password goes through stdin, never the command line.
+            gen = subprocess.run(
+                [engine, 'run', '--rm', '-i', '--network', 'none', '--entrypoint', 'vncpasswd',
+                 image, '-f'],
+                input=(pw1 + '\n').encode(), capture_output=True, check=False,
+            )
+            if gen.returncode != 0 or not gen.stdout:
+                return _reportProblems(cmndOutcome, what, ["vncpasswd produced no output; nothing changed."])
+            content = gen.stdout
+
+        # 'clear' copies in an empty file: vncStart.sh then runs VNC with no password.
+        with tempfile.NamedTemporaryFile(prefix='bisosVncPasswd.') as tmp:
+            tmp.write(content)
+            tmp.flush()
+            _run([engine, 'cp', tmp.name, f'{p.containerName}:{_VNC_PASSWD_PATH}'])
+
+        if _containerState(engine, p.containerName) == 'running':
+            b_io.ann.note(f"Restarting {p.containerName} so that VNC uses the new setting.")
+            _run([engine, 'restart', p.containerName])
+        else:
+            b_io.ann.note("It takes effect when the instance starts.")
+        mode = 'password' if action == 'set' else 'none'
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"VNC auth: {mode}")
 
 
 class containerProc_instancePs(cs.Cmnd):
@@ -458,7 +779,7 @@ class containerProc_instancePs(cs.Cmnd):
 
         p = _params()
         engine = p.engine.value
-        _run([engine, 'ps', '-a', '--filter', f'name={p.imageName}'])
+        _run([engine, 'ps', '-a', '--filter', f'name={p.containerName}'])
         return cmndOutcome.set(opError=b.op.OpError.Success, opResults="listed")
 
 
@@ -487,7 +808,7 @@ class containerProc_instanceLogs(cs.Cmnd):
         p = _params()
         engine = p.engine.value
         followFlag = ['-f'] if follow else []
-        _run([engine, 'logs'] + followFlag + [p.imageName], check=False)
+        _run([engine, 'logs'] + followFlag + [p.containerName], check=False)
         return cmndOutcome.set(opError=b.op.OpError.Success, opResults="logs shown")
 
 
@@ -531,13 +852,13 @@ class containerProc_instanceExec(cs.Cmnd):
 
         # Precedence: positional args > --execCmd > interactive bash
         if argsList:
-            argv = [engine, 'exec', '-it', p.imageName, *argsList]
+            argv = [engine, 'exec', '-it', p.containerName, *argsList]
             resultLabel = f"exec {' '.join(argsList)}"
         elif execCmd:
-            argv = [engine, 'exec', '-it', p.imageName, execCmd]
+            argv = [engine, 'exec', '-it', p.containerName, execCmd]
             resultLabel = f"exec {execCmd}"
         else:
-            argv = [engine, 'exec', '-it', p.imageName, 'bash']
+            argv = [engine, 'exec', '-it', p.containerName, 'bash']
             resultLabel = "exec bash"
 
         _run(argv, check=False)
@@ -584,7 +905,7 @@ class containerProc_exec_installRawBisos(cs.Cmnd):
         # leaves) so ~ resolves to /home/bystar. No -t: this is driven non-interactively
         # and 'exec -it' aborts with "the input device is not a TTY".
         result = _run(
-            [engine, 'exec', '-u', 'bystar', p.imageName,
+            [engine, 'exec', '-u', 'bystar', p.containerName,
              'bash', '-l', '-c', 'cd ~/raw-bisos && bash installRawBisos.sh'],
             check=False,
         )
@@ -623,19 +944,20 @@ class containerProc_instanceVerify(cs.Cmnd):
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
+        _refuseIfUnsupportedHost()
         failures: list[str] = []
         warnings: list[str] = []
 
         # 1. Container running?
         engine = p.engine.value
         inspect = subprocess.run(
-            [engine, 'inspect', '--format', '{{.State.Status}}', p.imageName],
+            [engine, 'inspect', '--format', '{{.State.Status}}', p.containerName],
             capture_output=True, text=True, check=False,
         )
         if inspect.returncode != 0 or inspect.stdout.strip() != 'running':
-            failures.append(f"Container {p.imageName} not running")
+            failures.append(f"Container {p.containerName} not running")
         else:
-            b_io.ann.note(f"PASS: container {p.imageName} running")
+            b_io.ann.note(f"PASS: container {p.containerName} running")
 
         # 2. SSH port reachable
         nc = subprocess.run(
@@ -779,13 +1101,17 @@ class containerProc_instanceStatus(cs.Cmnd):
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
+        _refuseIfUnsupportedHost()
         engine = p.engine.value
 
-        _run([engine, 'inspect', p.imageName], check=False)
+        _run([engine, 'inspect', p.containerName], check=False)
+
+        if _containerState(engine, p.containerName) is not None:
+            b_io.ann.note(f"VNC auth: {_vncAuthMode(engine, p.containerName)}")
 
         # SSH systemd summary if running
         inspect = subprocess.run(
-            [engine, 'inspect', '--format', '{{.State.Status}}', p.imageName],
+            [engine, 'inspect', '--format', '{{.State.Status}}', p.containerName],
             capture_output=True, text=True, check=False,
         )
         if inspect.stdout.strip() == 'running':
@@ -840,14 +1166,296 @@ class containerProc_fullClean(cs.Cmnd):
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
+        _refuseIfUnsupportedHost()
         engine = p.engine.value
 
-        subprocess.run([engine, 'stop', p.imageName], check=False)
-        subprocess.run([engine, 'rm', p.imageName], check=False)
-        subprocess.run([engine, 'rmi', p.imageName], check=False)
+        subprocess.run([engine, 'stop', p.containerName], check=False)
+        subprocess.run([engine, 'rm', p.containerName], check=False)
+        if p.isSecondary:
+            b_io.ann.note(f"Shared image {p.imageName} left alone (delete it in ../{p.primaryLeaf}).")
+        else:
+            subprocess.run([engine, 'rmi', p.imageName], check=False)
 
         return cmndOutcome.set(opError=b.op.OpError.Success,
-                               opResults=f"fullClean: {p.imageName}")
+                               opResults=f"fullClean: {p.containerName}")
+
+
+###############################################################################
+# The generic lifecycle verbs (fto_prepare ... fto_status) come from bisos.fileObj
+# (ftoLeaf_csu, on this seed's csuList; design: bisos.fileObj's README, "Generic
+# Lifecycle Verbs"). fileObj owns the verbs, the gate (<leaf>/dockerProc.control,
+# podmanProc.control) and the status log; this package registers only what each
+# verb does for a container leaf (the _lifecycle* actions at the end of this
+# section, ftoLeaf_seedInfo.setup(...)), plus the container-specific staleness checks.
+###############################################################################
+
+# --- Staleness ---------------------------------------------------------------
+
+def _inspectField(engine: str, kind: str, ref: str, field: str) -> str | None:
+    r = subprocess.run([engine, kind, 'inspect', '-f', '{{' + field + '}}', ref],
+                       capture_output=True, text=True, check=False)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _bareId(imageId: str | None) -> str:
+    return (imageId or '').removeprefix('sha256:')
+
+
+def _createdTime(text: str | None) -> float | None:
+    """Seconds since the epoch from docker's (RFC 3339) or podman's (Go time) 'Created'."""
+    import datetime
+    import re
+    if not text:
+        return None
+    m = re.match(r'(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d:\d\d)(\.\d+)?\s*(Z|[+-]\d\d:?\d\d)?', text)
+    if not m:
+        return None
+    when = datetime.datetime.fromisoformat(f"{m.group(1)}T{m.group(2)}")
+    zone = m.group(4) or 'Z'
+    if zone == 'Z':
+        offset = datetime.timedelta(0)
+    else:
+        sign = 1 if zone[0] == '+' else -1
+        digits = zone[1:].replace(':', '')
+        offset = sign * datetime.timedelta(hours=int(digits[:2]), minutes=int(digits[2:]))
+    when = when.replace(tzinfo=datetime.timezone(offset))
+    return when.timestamp() + float(m.group(3) or 0)
+
+
+def _imageStaleness(p: containerProc_seedInfo.ContainerParams) -> tuple[str, str]:
+    """('notBuilt' | 'stale' | 'current' | 'secondary', explanation)."""
+    engine = p.engine.value
+    if p.isSecondary:
+        return 'secondary', f"no image of its own (built in ../{p.primaryLeaf})"
+    created = _createdTime(_inspectField(engine, 'image', p.imageName, '.Created'))
+    if created is None:
+        return 'notBuilt', f"image {p.imageName} is not in {engine}'s local store"
+    if p.profile == containerProc_seedInfo.Profile.Confined or not p.baseImage:
+        return 'current', f"image {p.imageName} exists (FROM an external base)"
+    baseCreated = _createdTime(_inspectField(engine, 'image', p.baseImage, '.Created'))
+    if baseCreated is None:
+        return 'stale', f"its base {p.baseImage} is not in {engine}'s local store"
+    if created < baseCreated:
+        return 'stale', f"{p.imageName} is older than its base {p.baseImage}"
+    return 'current', f"{p.imageName} is newer than its base {p.baseImage}"
+
+
+def _instanceStaleness(p: containerProc_seedInfo.ContainerParams) -> tuple[str, str]:
+    """('noInstance' | 'notBuilt' | 'stale' | 'current', explanation)."""
+    engine = p.engine.value
+    usedId = _bareId(_inspectField(engine, 'container', p.containerName, '.Image'))
+    if not usedId:
+        return 'noInstance', f"container {p.containerName} does not exist"
+    tagId = _bareId(_inspectField(engine, 'image', f"{p.imageName}:latest", '.Id'))
+    if not tagId:
+        return 'notBuilt', f"image {p.imageName}:latest is not in {engine}'s local store"
+    if usedId != tagId:
+        return 'stale', f"{p.containerName} runs an older {p.imageName} (re-create to use the current one)"
+    return 'current', f"{p.containerName} runs the current {p.imageName}"
+
+
+class _StalenessMixin:
+    """Behaviour of the two read-only staleness checks; subclasses set _check and _label.
+
+    A mixin, not a cs.Cmnd: PyCS dispatches only *direct* subclasses of cs.Cmnd that are
+    top-level classes in the source, so each check is class x(_StalenessMixin, cs.Cmnd).
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = []
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+    _label = ''
+
+    @staticmethod
+    def _check(p: containerProc_seedInfo.ContainerParams) -> tuple[str, str]:
+        raise NotImplementedError
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """Print '<leaf>: <label> <verdict> --- <why>'."""
+        callParamsDict = {}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+        p = _params()
+        _refuseIfUnsupportedHost()
+        if (problem := _engineProblem(p.engine.value)) is not None:
+            return _reportProblems(cmndOutcome, f"checking {p.leafName}", [problem])
+        verdict, why = self._check(p)
+        b_io.ann.write(f"{p.leafName}: {self._label} {verdict} --- {why}")
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults=verdict)
+
+
+class containerProc_imageIsStale(_StalenessMixin, cs.Cmnd):
+    """Read-only. Is this leaf's image older than its base image (a rebuild is due)?
+
+    Verdicts: current | stale | notBuilt | secondary (no image of its own).
+    """
+    _label = 'image'
+    _check = staticmethod(_imageStaleness)
+
+
+class containerProc_instanceIsStale(_StalenessMixin, cs.Cmnd):
+    """Read-only. Does this leaf's instance run an older image than the tag's current one?
+
+    Verdicts: current | stale | noInstance | notBuilt. 'stale' is what reMaterialize re-creates.
+    """
+    _label = 'instance'
+    _check = staticmethod(_instanceStaleness)
+
+
+# --- Helpers of the lifecycle actions ----------------------------------------
+
+def _vncPasswdRead(engine: str, name: str) -> bytes:
+    """The instance's VNC password file content (b'' if none), read with 'cp ... -' (a tar stream)."""
+    import io
+    import tarfile
+    r = subprocess.run([engine, 'cp', f'{name}:{_VNC_PASSWD_PATH}', '-'],
+                       capture_output=True, check=False)
+    if r.returncode != 0 or not r.stdout:
+        return b''
+    try:
+        with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tar:
+            member = tar.next()
+            handle = tar.extractfile(member) if member is not None else None
+            return handle.read() if handle is not None else b''
+    except tarfile.TarError:
+        return b''
+
+
+def _vncPasswdWrite(engine: str, name: str, content: bytes) -> None:
+    import tempfile
+    with tempfile.NamedTemporaryFile(prefix='bisosVncPasswd.') as tmp:
+        tmp.write(content)
+        tmp.flush()
+        _run([engine, 'cp', tmp.name, f'{name}:{_VNC_PASSWD_PATH}'])
+
+
+def _instanceStart(p: containerProc_seedInfo.ContainerParams) -> None:
+    if p.engine == containerProc_seedInfo.Engine.Docker:
+        composeFile = pathlib.Path(p.plantPath).parent / 'docker-compose.yml'
+        _run(['docker', 'compose', '-f', str(composeFile), 'start'])
+    else:
+        _run(['podman', 'start', p.containerName])
+
+
+# --- The lifecycle actions, registered with bisos.fileObj --------------------------
+# Each is (cmndOutcome) -> b.op.Outcome, called by fileObj's fto_<verb> after its gate
+# check; fileObj writes the status line.
+
+def _lifecycleParams() -> containerProc_seedInfo.ContainerParams:
+    p = _params()
+    _refuseIfUnsupportedHost()
+    return p
+
+
+def _lifecyclePrepare(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
+    """prepare = containerProc_imageBuild (nothing to build in a secondary leaf)."""
+    return containerProc_imageBuild().cmnd(rtInv=cs.RtInvoker.new_py(), cmndOutcome=cmndOutcome)
+
+
+def _lifecycleMaterialize(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
+    """materialize = instanceUp, detached: running is left alone, stopped is started."""
+    return _instanceUp(cmndOutcome, _lifecycleParams(), detach=True)
+
+
+def _lifecycleReMaterialize(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
+    """reMaterialize: re-create a stale instance from the current image, keeping its VNC password.
+
+    No instance: create and start it. Current instance: nothing to do. Stale instance (it runs
+    an older image than the tag's): save the VNC password, delete, create without starting,
+    put the password back, start. Everything else inside the old container (e.g. a Raw-BISOS
+    installation) is lost --- /shuttle/share and /shuttle/this are outside it and survive.
+    """
+    p = _lifecycleParams()
+    engine = p.engine.value
+    if (problem := _engineProblem(engine)) is not None:
+        return _reportProblems(cmndOutcome, f"re-materializing {p.containerName}", [problem])
+    verdict, why = _instanceStaleness(p)
+    if verdict == 'noInstance':
+        return _instanceUp(cmndOutcome, p, detach=True)
+    if verdict == 'current':
+        b_io.ann.note(f"{p.leafName}: {why}; nothing to do.")
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults="current: nothing to do")
+    if verdict == 'notBuilt':
+        return _reportProblems(cmndOutcome, f"re-materializing {p.containerName}", [why])
+    b_io.ann.note(f"{p.leafName}: {why}.")
+    vncPasswd = _vncPasswdRead(engine, p.containerName)
+    outcome = _instanceDelete(cmndOutcome, p)
+    if outcome.error != b.op.OpError.Success:
+        return outcome
+    outcome = _instanceUp(cmndOutcome, p, start=False)
+    if outcome.error != b.op.OpError.Success:
+        return outcome
+    if vncPasswd:
+        _vncPasswdWrite(engine, p.containerName, vncPasswd)
+        b_io.ann.note("VNC password kept across the re-create.")
+    _instanceStart(p)
+    return cmndOutcome.set(opError=b.op.OpError.Success,
+                           opResults=f"re-created {p.containerName} from the current {p.imageName}")
+
+
+def _lifecycleUnMaterialize(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
+    """unMaterialize = instanceDelete (the image is kept)."""
+    return _instanceDelete(cmndOutcome, _lifecycleParams())
+
+
+def _lifecycleClean(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
+    """clean: remove the leaf's image and its copied raw-bisos/ build context.
+
+    Refuses while any container (running or stopped) uses the image. In a secondary leaf
+    there is nothing to clean: the shared image belongs to the primary leaf.
+    """
+    import re
+    p = _lifecycleParams()
+    engine = p.engine.value
+    if p.isSecondary:
+        b_io.ann.note(f"{p.leafName}: no image of its own; the shared {p.imageName} is left alone.")
+        return cmndOutcome.set(opError=b.op.OpError.Success, opResults="secondary: nothing to clean")
+    if (problem := _engineProblem(engine)) is not None:
+        return _reportProblems(cmndOutcome, f"cleaning {p.imageName}", [problem])
+    users = subprocess.run(
+        [engine, 'ps', '-a', '--filter', f'ancestor={p.imageName}', '--format', '{{.Names}}'],
+        capture_output=True, text=True, check=False,
+    ).stdout.split()
+    if users:
+        return _reportProblems(cmndOutcome, f"cleaning {p.imageName}", [
+            f"containers still use {p.imageName}: {', '.join(users)}. "
+            f"Delete them first (fto_unMaterialize / containerProc_instanceDelete)."])
+    if _imageExists(engine, p.imageName):
+        _run([engine, 'rmi', p.imageName])
+    leafDir = pathlib.Path(p.plantPath).parent
+    dockerfile = leafDir / 'Dockerfile'
+    rawBisos = leafDir / 'raw-bisos'
+    if (dockerfile.is_file() and re.search(_RAW_BISOS_COPY_RE, dockerfile.read_text(), re.M)
+            and rawBisos.is_dir() and not rawBisos.is_symlink()):
+        shutil.rmtree(rawBisos)
+        b_io.ann.note(f"Removed the copied build context {rawBisos}")
+    return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"cleaned {p.imageName}")
+
+
+def _lifecycleVerify(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
+    """verify = containerProc_instanceVerify."""
+    return containerProc_instanceVerify().cmnd(rtInv=cs.RtInvoker.new_py(), cmndOutcome=cmndOutcome)
+
+
+def _lifecycleStatus(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
+    """status = containerProc_instanceStatus."""
+    return containerProc_instanceStatus().cmnd(rtInv=cs.RtInvoker.new_py(), cmndOutcome=cmndOutcome)
+
+
+ftoLeaf_seedInfo.setup(
+    prepare=_lifecyclePrepare,
+    materialize=_lifecycleMaterialize,
+    reMaterialize=_lifecycleReMaterialize,
+    unMaterialize=_lifecycleUnMaterialize,
+    clean=_lifecycleClean,
+    verify=_lifecycleVerify,
+    status=_lifecycleStatus,
+)
 
 
 ###############################################################################
@@ -903,7 +1511,7 @@ class containerProc_instanceCommit(cs.Cmnd):
     """Snapshot the running instance to a new image tag (docker commit / podman commit).
 
     Captures the writable layer only. Does NOT capture volumes.
-    Default tag is <imageName>:snapshot-<YYYYmmdd-HHMMSS>; override with --tag=.
+    Default tag is <leafName>:snapshot-<YYYYmmdd-HHMMSS>; override with --tag=.
 
     Optional --message= and --author= populate commit metadata.
     """
@@ -934,18 +1542,18 @@ class containerProc_instanceCommit(cs.Cmnd):
         if tag is None:
             tag = f"snapshot-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
-        targetTag = f"{p.imageName}:{tag}"
+        targetTag = f"{p.leafName}:{tag}"
 
         cmd = [engine, 'commit']
         if message:
             cmd += ['-m', message]
         if author:
             cmd += ['-a', author]
-        # Container name is the same as the leaf's imageName (BISOS convention: one instance per leaf).
-        cmd += [p.imageName, targetTag]
+        # The snapshot is named after the instance's leaf (for a secondary leaf, not the shared image).
+        cmd += [p.containerName, targetTag]
 
         _run(cmd)
-        b_io.ann.write(f"committed {p.imageName} -> {targetTag}")
+        b_io.ann.write(f"committed {p.containerName} -> {targetTag}")
         return cmndOutcome.set(opError=b.op.OpError.Success, opResults=targetTag)
 
 
@@ -1017,28 +1625,86 @@ class containerProc_imageSave(cs.Cmnd):
 import warnings as _warnings
 
 
-def _deprecated(oldName: str, newCls: type) -> type:
-    """Build a Cmnd subclass that warns then delegates to newCls."""
-    class _Deprecated(newCls):  # type: ignore[valid-type,misc]
-        def cmnd(self, *a, **kw):
-            _warnings.warn(
-                f"{oldName} is deprecated; use {newCls.__name__} instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return super().cmnd(*a, **kw)
-    _Deprecated.__name__ = oldName
-    _Deprecated.__qualname__ = oldName
-    return _Deprecated
+class _AliasMixin:
+    """Run another command class: an alias that is still a *direct* cs.Cmnd subclass.
+
+    PyCS dispatches only names that are top-level classes in the source and direct
+    subclasses of cs.Cmnd, so an alias cannot simply derive from its target. Use as
+    class alias(_AliasMixin, cs.Cmnd) with _target set and the target's parameter
+    declarations copied (the dispatcher reads them from the alias).
+    """
+    _target: typing.Any = None
+
+    def cmnd(self, rtInv, cmndOutcome, **kwArgs):
+        return self._target().cmnd(rtInv=rtInv, cmndOutcome=cmndOutcome, **kwArgs)
 
 
-containerProc_build      = _deprecated('containerProc_build',      containerProc_imageBuild)
-containerProc_composeUp  = _deprecated('containerProc_composeUp',  containerProc_instanceUp)
-containerProc_composeDown = _deprecated('containerProc_composeDown', containerProc_instanceDown)
-containerProc_run        = _deprecated('containerProc_run',        containerProc_instanceUp)
-containerProc_verify     = _deprecated('containerProc_verify',     containerProc_instanceVerify)
-containerProc_status     = _deprecated('containerProc_status',     containerProc_instanceStatus)
-containerProc_clean      = _deprecated('containerProc_clean',      containerProc_fullClean)
+class _DeprecatedNameMixin(_AliasMixin):
+    """An alias (see _AliasMixin) that first warns that its name is deprecated."""
+
+    def cmnd(self, rtInv, cmndOutcome, **kwArgs):
+        _warnings.warn(
+            f"{type(self).__name__} is deprecated; use {self._target.__name__} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return super().cmnd(rtInv, cmndOutcome, **kwArgs)
+
+
+class containerProc_build(_DeprecatedNameMixin, cs.Cmnd):
+    """Deprecated name of containerProc_imageBuild."""
+    _target = containerProc_imageBuild
+    cmndParamsMandatory = containerProc_imageBuild.cmndParamsMandatory
+    cmndParamsOptional = containerProc_imageBuild.cmndParamsOptional
+    cmndArgsLen = containerProc_imageBuild.cmndArgsLen
+
+
+class containerProc_composeUp(_DeprecatedNameMixin, cs.Cmnd):
+    """Deprecated name of containerProc_instanceUp."""
+    _target = containerProc_instanceUp
+    cmndParamsMandatory = containerProc_instanceUp.cmndParamsMandatory
+    cmndParamsOptional = containerProc_instanceUp.cmndParamsOptional
+    cmndArgsLen = containerProc_instanceUp.cmndArgsLen
+
+
+class containerProc_composeDown(_DeprecatedNameMixin, cs.Cmnd):
+    """Deprecated name of containerProc_instanceDown."""
+    _target = containerProc_instanceDown
+    cmndParamsMandatory = containerProc_instanceDown.cmndParamsMandatory
+    cmndParamsOptional = containerProc_instanceDown.cmndParamsOptional
+    cmndArgsLen = containerProc_instanceDown.cmndArgsLen
+
+
+class containerProc_run(_DeprecatedNameMixin, cs.Cmnd):
+    """Deprecated name of containerProc_instanceUp."""
+    _target = containerProc_instanceUp
+    cmndParamsMandatory = containerProc_instanceUp.cmndParamsMandatory
+    cmndParamsOptional = containerProc_instanceUp.cmndParamsOptional
+    cmndArgsLen = containerProc_instanceUp.cmndArgsLen
+
+
+class containerProc_verify(_DeprecatedNameMixin, cs.Cmnd):
+    """Deprecated name of containerProc_instanceVerify."""
+    _target = containerProc_instanceVerify
+    cmndParamsMandatory = containerProc_instanceVerify.cmndParamsMandatory
+    cmndParamsOptional = containerProc_instanceVerify.cmndParamsOptional
+    cmndArgsLen = containerProc_instanceVerify.cmndArgsLen
+
+
+class containerProc_status(_DeprecatedNameMixin, cs.Cmnd):
+    """Deprecated name of containerProc_instanceStatus."""
+    _target = containerProc_instanceStatus
+    cmndParamsMandatory = containerProc_instanceStatus.cmndParamsMandatory
+    cmndParamsOptional = containerProc_instanceStatus.cmndParamsOptional
+    cmndArgsLen = containerProc_instanceStatus.cmndArgsLen
+
+
+class containerProc_clean(_DeprecatedNameMixin, cs.Cmnd):
+    """Deprecated name of containerProc_fullClean."""
+    _target = containerProc_fullClean
+    cmndParamsMandatory = containerProc_fullClean.cmndParamsMandatory
+    cmndParamsOptional = containerProc_fullClean.cmndParamsOptional
+    cmndArgsLen = containerProc_fullClean.cmndArgsLen
 
 
 ###############################################################################
@@ -1199,11 +1865,11 @@ class podmanDirectCmnds(cs.Cmnd):
 ###############################################################################
 
 def examples_csu() -> None:
-    """Examples menu, filtered by p.engine, p.profile, and p.cgroupVariants.
+    """Examples menu, filtered by p.engine and p.profile.
 
     Reads params from the planted path so the menu shows only commands and
     options relevant to *this* leaf: no docker-compose commands on rootless-sysd
-    leaves, no podman run on docker leaves, no cgv1 option on v2-only leaves.
+    leaves, no podman run on docker leaves. (cgroup v2 hosts only.)
 
     If we are NOT inside a planted context (e.g. running containerProc-seed.cs
     directly with no .spcs), falls back to the unfiltered full menu.
@@ -1220,10 +1886,9 @@ def examples_csu() -> None:
 
     isDocker = (p.engine == containerProc_seedInfo.Engine.Docker)
     isPodman = (p.engine == containerProc_seedInfo.Engine.Podman)
-    supportsV1 = (containerProc_seedInfo.CgroupVer.V1 in p.cgroupVariants)
 
     cs.examples.menuChapter(
-        f'*containerProc for {p.imageName}* '
+        f'*containerProc for {p.containerName}* '
         f'(engine={p.engine.value}, profile={p.profile.value})'
     )
 
@@ -1242,17 +1907,12 @@ def examples_csu() -> None:
     cs.examples.menuSection('Instance')
 
     if isDocker:
-        cmnd('containerProc_instanceUp', comment="# docker compose up -d (cgroup v2)")
-        if supportsV1:
-            cmnd('containerProc_instanceUp', pars=od([('cgroupVer', 'v1')]),
-                 comment="# cgroup v1 host: uses docker-compose.cgv1.yml")
-        cmnd('containerProc_instanceDown', comment="# docker compose down")
-        if supportsV1:
-            cmnd('containerProc_instanceDown', pars=od([('cgroupVer', 'v1')]),
-                 comment="# cgroup v1 host")
+        cmnd('containerProc_instanceUp',
+             comment="# checks, then docker compose up -d --no-build")
+        cmnd('containerProc_instanceDown', comment="# docker compose stop")
     elif isPodman:
         cmnd('containerProc_instanceUp', pars=od([('detach', 'true')]),
-             comment="# podman run --systemd=always -d")
+             comment="# checks, then podman run --systemd=always -d (or start)")
         cmnd('containerProc_instanceDown', comment="# podman stop")
 
     cmnd('containerProc_instanceRestart')
@@ -1281,9 +1941,12 @@ def examples_csu() -> None:
          comment="# cd ~/raw-bisos && bash installRawBisos.sh")
 
     cmnd('containerProc_instanceDelete', comment="# stop + rm instance (keeps image)")
-    if isDocker and supportsV1:
-        cmnd('containerProc_instanceDelete', pars=od([('cgroupVer', 'v1')]),
-             comment="# cgroup v1 host")
+
+    cs.examples.menuSection('VNC Password (optional; no password is the default)')
+    cmnd('containerProc_instanceVncPassword', args="set",
+         comment="# asks for a password; VNC and noVNC then require it")
+    cmnd('containerProc_instanceVncPassword', args="clear",
+         comment="# back to no password")
 
     # -----------------------------------------------------------------
     # Verify + Status
@@ -1297,7 +1960,7 @@ def examples_csu() -> None:
     # -----------------------------------------------------------------
     cs.examples.menuSection('Backup / Snapshot')
     cmnd('containerProc_instanceCommit',
-         comment=f"# snapshot the running {p.imageName} -> {p.imageName}:snapshot-<timestamp>")
+         comment=f"# snapshot the running {p.containerName} -> {p.leafName}:snapshot-<timestamp>")
     cmnd('containerProc_instanceCommit',
          pars=od([('tag', 'checkpoint')]),
          comment="# ... with an explicit tag")
@@ -1316,6 +1979,15 @@ def examples_csu() -> None:
         f"{p.engine.value} load -i /bisos/var/dockerProc/backups/$USER/{p.imageName}/{p.imageName}-latest-<timestamp>.tar"
         f"   # restore on this or another host (plain {p.engine.value} load)"
     )
+
+    # -----------------------------------------------------------------
+    # Staleness, and the FTO lifecycle verbs + gate (from bisos.fileObj)
+    # -----------------------------------------------------------------
+    cs.examples.menuSection('Staleness (read-only)')
+    cmnd('containerProc_imageIsStale', comment="# image older than its base?")
+    cmnd('containerProc_instanceIsStale', comment="# instance on an older image than its tag?")
+
+    ftoLeaf_seedInfo.lifecycleExamplesMenu()
 
     # -----------------------------------------------------------------
     # Full clean
@@ -1343,7 +2015,6 @@ def _examplesUnfiltered() -> None:
 
     cs.examples.menuSection('Instance')
     cmnd('containerProc_instanceUp')
-    cmnd('containerProc_instanceUp', pars=od([('cgroupVer', 'v1')]))
     cmnd('containerProc_instanceUp', pars=od([('detach', 'true')]))
     cmnd('containerProc_instanceDown')
     cmnd('containerProc_instanceRestart')
@@ -1354,6 +2025,8 @@ def _examplesUnfiltered() -> None:
     cs.examples.execInsert("dockerProc.spcs -i containerProc_instanceExec -- uname -a")
     cmnd('containerProc_exec_installRawBisos')
     cmnd('containerProc_instanceDelete')
+    cmnd('containerProc_instanceVncPassword', args="set")
+    cmnd('containerProc_instanceVncPassword', args="clear")
 
     cs.examples.menuSection('Verify + Status')
     cmnd('containerProc_instanceVerify')

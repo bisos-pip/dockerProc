@@ -153,14 +153,34 @@ Goal: Make the design in the =containerProcArchitecture= figure real.
 Introduce a per-user, per-image, per-instance registrar on the Container
 Platform that assigns host-side ports, so multiple users on one VM ---
 and multiple instances of one image per user --- no longer collide on
-the fixed 2222/2223/... port table.
+the fixed 2222/2223/... port table. The same registrar also assigns each
+instance its cgroup v1 bridge subnet (see "cgroup v1 subnets" below).
 
 The registrar is a =bisos.regfps.RegFPs= subclass following the precedent
 of =bisos.siteRegistrars.containerRegfps.Container_RegFPs=. Storage
 lives at =/bisos/platform/registrar/dockerProc/<user>/<imageName>/instance<N>/=;
 each instance directory is a =RegFPs= unit whose file-parameters
-carry the assigned =sshPort= / =vncPort= / =novncPort= (plus
+carry the assigned =sshPort= / =vncPort= / =novncPort= / =cgv1Subnet= (plus
 =engine=, =profile=, =plantPath=, =createdAt= for diagnostics).
+
+** cgroup v1 subnets --- why the registrar must assign them too
+
+Found in Stage 6 ([[6.1]], 2026-10). On a cgroup v1 host (RHEL 8) the privileged sysd leaves run
+from =docker-compose.cgv1.yml=, which gives each container its own bridge network on an *explicit*
+subnet, because the host's default docker address pools can be exhausted ("all predefined address
+pools have been fully subnetted"). An explicit subnet is a host-global resource, like a host port:
+- Two instances with the same subnet cannot both be created: =bisos_deb13-sysd-2= started as a copy
+  of =bisos_deb13-sysd= and carried its subnet.
+- A subnet can overlap the host's own networks. The first choice, =10.254.x.0/24=, was moved to
+  =172.16.x.0/24= after on-host verification (bro_dockerfiles commit 376e74e).
+
+Today the subnets are hand-picked per leaf, in each =docker-compose.cgv1.yml=:
+=172.16.11.0/24= (deb12-sysd), =172.16.12.0/24= (deb13-sysd), =172.16.13.0/24= (deb13-sysd-2).
+The standalone =containerManage.sh create= refuses a subnet that overlaps a docker network or a
+host route; that check detects a collision but does not allocate. With many users and instances
+per VM, the registrar must allocate the subnet with the ports, atomically, from a pool reserved in
+=bisos.banna=. The cgroup v2 compose files need no explicit subnet; =cgv1Subnet= is assigned to
+every instance anyway (cheap; an instance may be created on either kind of host).
 
 Two consumers must be wired --- =.spcs= (on the platform) and Remote User
 (over ssh). The design figure already shows both.
@@ -186,6 +206,7 @@ Two consumers must be wired --- =.spcs= (on the platform) and Remote User
           sshPort/value            # assigned host-side ssh port
           vncPort/value
           novncPort/value
+          cgv1Subnet/value         # e.g. 172.16.37.0/24 --- bridge subnet on cgroup v1
           engine/value             # docker | podman
           profile/value            # confined | privileged | rootless-sysd
           plantPath/value          # source leaf path (for round-trip)
@@ -198,6 +219,12 @@ Port allocation pool: e.g. =sshPort= in =20000--29999=, =vncPort= in
 =30000--39999=, =novncPort= in =40000--49999=, allocated by
 =unitsNextNu()= against the union of already-assigned ports in that pool
 (scanning all users, since ports are host-global).
+
+Subnet allocation pool: e.g. =172.16.0.0/16= carved into =/24= blocks (256 instances per host),
+the lowest =/24= not assigned in the registrar *and* not overlapping a docker network or a host
+route on this host (the same check =containerManage.sh= does). Docker's own default pools are
+=172.17.0.0/16= upward and =192.168.0.0/16=, so =172.16.0.0/16= does not collide with them.
+The current hand-picked =172.16.11-13.0/24= lie inside it and should be adopted, not reallocated.
 
 * Stage 4 TODOs -- Future Plans
 
@@ -222,8 +249,8 @@ Concretely:
 - =__init__= sets =regBaseDir= to =/bisos/platform/registrar/dockerProc/<user>/<imageName>/=
   (per-user, per-image scope).
 - =commonParamsSpecify()= module-level function declares the FPs:
-  =sshPort=, =vncPort=, =novncPort=, =engine=, =profile=, =plantPath=,
-  =createdAt=.
+  =sshPort=, =vncPort=, =novncPort=, =cgv1Subnet=, =engine=, =profile=,
+  =plantPath=, =createdAt=.
 - =examples_csu()= per bisos-pip convention.
 - Import =bisos.dockerProc.containerProc_seedInfo= for =Engine= / =Profile= enums.
 Uses =unitsNextNu= for instance-number allocation; port allocation is a new
@@ -263,6 +290,22 @@ section documenting how to consume range entries (mirror the "TCP Port
 Numbers" section that already exists for individual ports).
 ----- AI Results: ------
 
+** TODO [#A] Reserve the dockerProc cgroup v1 subnet pool in =bisos.banna= :aiAndMe:
+SCHEDULED: <2026-10-26 Mon>
+Same principle as the port ranges above: the pool of bridge subnets the registrar hands out for
+=docker-compose.cgv1.yml= comes from =bisos.banna=, not from =bisos.dockerProc=. Why it is needed:
+"cgroup v1 subnets" in the Stage 4 goal above.
+
+Add one IPv4-range entry, =dockerProcInstancesCgv1SubnetPool= = =172.16.0.0/16=, with a block
+size of =/24=. banna has IP-address registries already (=.here= addresses); check whether one of
+them can carry a CIDR range with a block size, or whether a sibling class is needed (e.g.
+=Ipv4SubnetPoolInfo= with =poolCidr= / =blockPrefixLen= / =poolName= / =poolDescription=). Check
+the pool against banna's existing IP assignments before committing, and record that docker's
+default pools (=172.17.0.0/16= upward, =192.168.0.0/16=) are deliberately avoided.
+
+Update the =banna-lookup= skill's SKILL.md with how to consume the subnet pool.
+----- AI Results: ------
+
 ** TODO [#A] Implement port-allocation helper =allocateHostPorts()= :ai:
 SCHEDULED: <2026-08-11 Tue>
 Pure function in =containerProc_regfps.py=:
@@ -284,6 +327,25 @@ here --- this is a helper called by =dockerProcRegistrar_instanceCreate=.
 Depends on the previous TODO (banna range reservation) being complete.
 ----- AI Results: ------
 
+** TODO [#A] Implement subnet allocation; combine as =allocateInstanceResources()= :ai:
+SCHEDULED: <2026-10-26 Mon>
+In =containerProc_regfps.py=, next to =allocateHostPorts()=:
+- =allocateCgv1Subnet() -> str= --- the lowest =/24= of the banna pool
+  (=dockerProcInstancesCgv1SubnetPool=) that is (a) not the =cgv1Subnet= of any registered
+  instance, across all users, and (b) does not overlap a docker network (=docker network inspect=,
+  IPv4 IPAM subnets) or a host route (=ip -4 route=, default routes and docker bridges skipped).
+  (b) is the check in bro_dockerfiles' =containerManage.sh= (=subnetConflicts=); port it, with
+  =ipaddress.ip_network(...).overlaps()= instead of the bash CIDR arithmetic. Fail loudly, naming
+  the pool, if it is exhausted.
+- =allocateInstanceResources(user, imageName) -> dict= --- calls both and returns
+  ={'sshPort', 'vncPort', 'novncPort', 'cgv1Subnet'}=, atomically (all or none). This is what
+  =dockerProcRegistrar_instanceCreate= calls.
+- Migration: an instance registered for an existing leaf adopts the subnet already in its
+  =docker-compose.cgv1.yml= (=172.16.11/12/13.0/24= today) when it is free, instead of allocating
+  a new one.
+Depends on the banna subnet-pool TODO above.
+----- AI Results: ------
+
 ** TODO [#A] Add registrar CS commands to =containerProc_csu.py= :ai:
 SCHEDULED: <2026-08-11 Tue>
 New =cs.Cmnd= classes in =containerProc_csu.py=, all following the
@@ -294,18 +356,20 @@ in a planted context).
 
 | Cmnd class                              | Purpose                                                        |
 |-----------------------------------------+----------------------------------------------------------------|
-| =dockerProcRegistrar_instanceCreate=    | Allocate a new =instanceN= unit + host ports. Returns port triple. |
+| =dockerProcRegistrar_instanceCreate=    | Allocate a new =instanceN= unit + host ports + cgv1 subnet.    |
 | =dockerProcRegistrar_instanceRead=      | Read one =instanceN=; return its FPs as dict.                  |
 | =dockerProcRegistrar_instanceUpdate=    | Overwrite one FP in an existing =instanceN=. Rarely used.      |
-| =dockerProcRegistrar_instanceDelete=    | Remove an =instanceN= unit (releases its ports back to pool).  |
+| =dockerProcRegistrar_instanceDelete=    | Remove an =instanceN= unit (releases its ports and subnet).    |
 | =dockerProcRegistrar_instanceList=      | List all =instanceN= for =<user>/<imageName>=. Table output.   |
 | =dockerProcRegistrar_userInstancesList= | List all instances for =<user>= across all images.             |
 | =dockerProcRegistrar_allInstancesList=  | List every registered instance on this platform (admin view).  |
 | =dockerProcRegistrar_portsShow=         | Show pool usage: assigned vs free counts.                      |
+| =dockerProcRegistrar_subnetsShow=       | Show subnet pool usage, and registered subnets now in conflict |
+|                                         | with a docker network or host route on this host.             |
 
 Each command wraps =DockerProc_RegFPs= method calls (=unitCreate=,
 =unitRead=, =unitUpdate=, =unitDelete=, =unitsList=). The
-=_instanceCreate= command additionally calls =allocateHostPorts()=
+=_instanceCreate= command additionally calls =allocateInstanceResources()=
 before writing the FPs.
 ----- AI Results: ------
 
@@ -321,7 +385,8 @@ Specifically:
   =sshPort= / =vncPort= / =novncPort= from registrar; export them as
   environment variables consumed by =docker-compose.yml= via
   =${SSH_PORT:-2222}=-style defaults. This requires a small edit to
-  each leaf's =docker-compose.yml=.
+  each leaf's =docker-compose.yml=. On cgroup v1 also export =CGV1_SUBNET= (and a per-instance
+  network name) for =docker-compose.cgv1.yml='s =ipam= block.
 - =containerProc_run= (podman rootless-sysd) --- swap literal
   =-p 2225:22= etc. for the registrar-resolved values.
 - =containerProc_verify= --- probe the registrar-resolved host ports,
@@ -373,9 +438,13 @@ SCHEDULED: <2026-08-11 Tue>
 Replace hardcoded =ports:= entries (e.g. =2223:22=, =5902:5901=,
 =6902:6901=) with =${SSH_PORT:-<fallback>}:22=, etc. Fallback values
 keep the current single-user behavior working when no registrar is
-consulted. Six leaves to update (four docker + two rootless-sysd's
-=run.bash=). Coordinated with the =.spcs= wiring above --- do these
-together so a rollout is atomic per leaf.
+consulted. In the =docker-compose.cgv1.yml= files, likewise
+=subnet: ${CGV1_SUBNET:-172.16.12.0/24}=. Five docker leaves to update; the two rootless-sysd
+leaves take their ports from the Quadlet =.container= file (read by =containerManage.sh=), which
+has no variable substitution, so they need a different mechanism. Coordinated with the =.spcs=
+wiring above --- do these together so a rollout is atomic per leaf. The standalone
+=containerManage.sh= reads ports and subnet from the compose file, so it must then also expand
+the =${VAR:-default}= forms (today it reads literal values only).
 ----- AI Results: ------
 
 ** TODO [#B] Add registrar tests to =py3/tests/verify.sh= :ai:
@@ -383,6 +452,8 @@ SCHEDULED: <2026-08-11 Tue>
 Extend existing verify.sh with:
 - =allocateHostPorts()= pure-function test: create a scratch base dir
   with two mock instances; assert the next allocation avoids their ports.
+- =allocateCgv1Subnet()= test: mock instances holding two =/24=s, plus a stubbed docker-network /
+  host-route list overlapping a third; assert the allocation skips all three.
 - =DockerProc_RegFPs= round-trip: unitCreate → unitRead → unitDelete,
   asserting FPs match on read.
 - =dockerProcRegistrar.cs= smoke test (no-args → examples menu).
@@ -424,6 +495,24 @@ Goal: Capture Problems/Issues/Bugs and Future Feature Ideas
 ** TODO Make quickXx be a bisos pattern. Break Backup into separate examples. :aiAndMe:
 SCHEDULED: <2026-08-18 Tue 16:56>
 quickGit.cs quickKvm.cs quickPip.cs etc
+----- AI Results: ------
+
+** TODO [#B] Retire the vagrant-derived legacy scripts (drops =bisos.vagrantBaseBoxes=) :aiAndMe:
+SCHEDULED: <2026-10-27 Tue>
+=py3/bin/dockerProc.cs= and =py3/bin/exmpl-dockerProc.cs= are copies from bisos.vagrantBaseBoxes
+(=csuList= includes =bisos.vagrantBaseBoxes.vagBoxes_csu=), still in =setup.py='s =scripts=. They
+are why =requirements.txt= (=pypiProc.sh -i genPipreqs=, which scans =./bin=) and so =setup.py='s
+=requires= (now =:requirements "requirements.txt"=) still list =bisos.vagrantBaseBoxes=, although
+AI-DevStatus records it as removed (2026-08). Decide: delete them (and the =*.vagrant-orig= files)
+or rework them; then re-run =genPipreqs= and regenerate =setup.py='s dblocks.
+----- AI Results: ------
+
+** TODO Revisit KasmVNC and an Incus profile :aiAndMe:
+From bro_dockerfiles' PriorAndSimilarArt.org (2026-10-26). User decision: not now, revisit later.
+KasmVNC: one port with built-in TLS and login, better browser desktop; costs: weak support for
+ordinary VNC viewers, a non-Debian package. Incus: VM-like systemd system containers,
+unprivileged by default, plus VMs; a different image toolchain (Dockerfiles do not carry over).
+(=devcontainer.json= was dropped: =/shuttle/this= already serves the purpose.)
 ----- AI Results: ------
 
 ** -
@@ -534,8 +623,618 @@ Rule (user): *a numeric suffix on an instance (leaf) name means it shares the im
   sysd). Needs: image name = leaf name minus =-<N>=; ports from the compose file (or the registrar).
   Until then, use the standalone scripts in sysd-2.
 
+*Step 3 done by the user* [2026-10-26]: =bisos_deb13-sysd-2= verified on RedHat 8 (cgroup v1) and
+Debian 13 (cgroup v2); the cgroup v1 subnets were moved from =10.254.x= to =172.16.x=
+(bro_dockerfiles 376e74e). The need for subnet registration was added to Stage 4 (goal section
+"cgroup v1 subnets", a banna subnet-pool TODO, an =allocateCgv1Subnet()= /
+=allocateInstanceResources()= TODO, =cgv1Subnet= FP, and edits to the CS-commands, =.spcs=-wiring,
+compose-template and tests TODOs).
+
+*Step 4, propagation, done* [2026-10-26] (bro_dockerfiles, uncommitted). User decisions: scripts
+byte-identical in every leaf, everything derived; rootless: wrap podman, drop =run.bash=;
+deb13-fresh moved to 2228/5907/6907 (it collided with sysd-2's 2227/5906/6906).
+- =imageBuild.sh= (all 7 leaves, one file; =git mv= of =build.bash= in the 5 leaves that had one):
+  image = leaf name; engine = podman for =rootless-sysd= else docker; base = Dockerfile =FROM=
+  (=bisos_*= → the leaf of that name in the release); Raw-BISOS copy if the Dockerfile has
+  =COPY ./raw-bisos=; DockerHub name from a new
+  =LABEL org.bisos.hubImage="..." org.bisos.hubTag="..."= at the end of the 6 Dockerfiles (values
+  carried over from the old scripts). Podman keeps the old rootless behaviour: =--isolation=chroot=,
+  builds the confined base into podman's store when missing, manifest push for =-u=.
+  *Adding the LABEL changes the image IDs: each image rebuilds once (children fully, since their
+  base changed).*
+- =containerManage.sh= (all 7 leaves, one file): docker leaves as verified on sysd; confined leaves
+  use their one =docker-compose.yml= on either cgroup version; rootless leaves run =podman create
+  --pids-limit=16384 --systemd=always --stop-signal SIGRTMIN+3 -p ... -v <leaf>:/shuttle/this=
+  (as the old =run.bash=), cgroup v2 only, container name + ports read from the Quadlet
+  =*.container= file, image = local =<leafName>:latest=. Quadlet =ContainerName= changed
+  =bisos-debNN-rootless-sysd= → =bisos_debNN-rootless-sysd= (= =.spcs= / =run.bash= name).
+  Fixed a bug also in the verified version: =usage()= read =$0= after the =cd=.
+- =run.bash= removed (=git rm=) in both rootless leaves.
+- deb12-sysd =docker-compose.cgv1.yml=: added network =bisos_deb12_cgv1= on =172.16.11.0/24=
+  (had none). Stale =10.254= / =verify.sh mb-...= comments fixed in the cgv1 files.
+- =README.org=: generated for the 6 non-secondary leaves (confined text replaces the upstream
+  braughtg README; keeps credentials and noVNC tips); sysd-2's updated by hand. Repo README.org
+  updated (file table, identical-scripts and numeric-suffix rules, running, port + subnet table),
+  graphviz label updated and =repoStructureAtAGlance.png= re-rendered.
+- bisos.dockerProc: =_PORT_TABLE= deb13 confined → 2228/5907/6907; DevStatus port table; comments
+  in =dockerProc-sbom.pcs=, =podman-sbom.pcs=, =hostPodmanVerify.sh=.
+
+Tested in a container (no daemon) with fake =docker= / =podman= / =stat= on =PATH=: =bash -n=;
+=imageBuild.sh= in all 7 leaves (base-missing stop, rootless base auto-build, Raw-BISOS copy, hub
+names from LABELs, secondary no-op); =containerManage.sh= =create= in all 7 on v1 and v2, the other
+verbs and =-n= for both engines, rootless refusal on v1, real port-in-use refusal (5901/6901 taken
+here), real in-container refusal. *Not run on a daemon.*
+
+VM tests still to do: (a) deb12-sysd on cgroup v1 with its new subnet; (b) a rootless leaf on a
+cgroup v2 host: =imageBuild.sh=, =containerManage.sh create/start=, =verify.sh=; (c) the confined
+leaves after the =LABEL= rebuild; (d) deb13-fresh on its new ports.
+Still open: =paramsFromPlantPath()= and the numeric-suffix rule (above); the .spcs build does not
+copy Raw-BISOS; bro_dockerfiles' own AI-DevStatus.org still describes =build.bash= / =run.bash=
+and =10.254= (run =/bx-status-update= there); the leftover =Dockerfile= / =dockerConf/= in sysd-2.
+
+*bro_dockerfiles README.org restructured* [2026-10-26] (user request: the repo no longer depends on
+bisos.dockerProc). New order: what it is → "Two Ways to Use This Repo" (standalone / with BISOS
+table + verb mapping) → Quick Start (standalone) → structure/images/host compatibility (common) →
+Standalone Use → Common to Both Ways → Use With BISOS (the =.spcs=, walker, =rawBuildContainer.cs=,
+Related Pieces, Architectural Context moved here) → Related Resources (no =/bisos/git/auth= paths).
+Fixed: =FROM= / image names now local (=bisos_<leaf>:latest=), privileged runs on cgroup v1,
+Raw-BISOS payload is copied (not symlinked), standalone host check without =podmanHostVerify.cs=.
+Figure: no new one (decision: a table shows two parallel ways better); the existing one was relabelled
+(Standalone / With BISOS), lost its port labels and "operates on" edges, and gained sysd-2.
+
+*bisos.dockerProc: containerManage.sh checks added; cgroup v1 dropped* [2026-10-26]. Before:
+=instanceUp= ran =compose up -d= / =podman run= with no checks (and compose could build as a side
+effect); Down/Restart/Delete did not check existence; verify/status/fullClean bypassed even the
+in-container refusal. Now as recorded in AI-DevStatus "Key Design Decisions" (two entries dated
+2026-10-26). The cgroup v1 subnet-overlap check was not ported: it only applies to
+=docker-compose.cgv1.yml=, which bisos.dockerProc no longer uses. Docs: bisos.dockerProc README
+(v2-only, the checks; =org-table-align= also realigned its other tables), bro_dockerfiles README
+(Hosts row, host compatibility) and the leaf READMEs. Tested: 14 cases against fake engines
+(loading the source modules; the venv here has a non-editable bisos.dockerProc), including the
+real port-in-use refusal and both real host refusals. *Not run on a daemon.* Stage 4 note: the
+registrar's =cgv1Subnet= is now needed only if v1 support comes back (standalone stays manual).
+
+*bro_dockerfiles: Prior and Similar Art* [2026-10-26], modelled on bisos.aiActivity's
+=PriorAndSimilarArt.org=: a new =PriorAndSimilarArt.org= (survey of 2026-10-26, web search only,
+nothing run: VNC desktop images, Webtop/Kasm, systemd test images, x11docker/Distrobox, LXD/Incus,
+devcontainers/DevPod/Coder, podman + Quadlet; axes, summary table, what is distinctive, ideas) and a
+short "Prior and Similar Art" section in its README. Ideas recorded there, not acted on: bind
+published ports to =127.0.0.1= by default (images use a well-known password, VNC needs none), a
+persistent-home option, a =devcontainer.json= per leaf, KasmVNC, one matrix description generating
+the leaves, an Incus profile.
+
 ** -
 
+
+* Stage 7: =/shuttle/share= --- a Per-Instance Directory Shared with the Host
+
+Goal: every systemd instance (privileged and rootless-sysd leaves; not confined) gets a directory
+shared with the host, for convenient exchange of files between host and container:
+
+: host:       /var/container/<user>/<containerName>/
+: container:  /shuttle/share
+
+On by default. Both ways (standalone =containerManage.sh= and =bisos.dockerProc=) at parity.
+Replaces the earlier =/shuttle/home= idea (mount the host user's whole =$HOME=), dropped
+2026-10-26 by user decision: too much exposure (=~/.ssh=, =~/.gnupg=), and it needed the confined
+entrypoint reworked.
+
+** Design (agreed 2026-10-26)
+
+- *Profiles:* privileged (docker) and rootless-sysd (podman). Not confined.
+- *Host path:* =/var/container/<user>/<containerName>/=. =<user>= is the host user running
+  =create=; =<containerName>= the leaf's container name (so =bisos_deb13-sysd-2= gets its own).
+  Per user because rootless podman container names are only unique per user. Same path in both
+  ways.
+- *=/var/container=:* created once per host by an admin, root-owned, mode 1777 (sticky, like
+  =/tmp=): =sudo install -d -m 1777 /var/container=. Each =<user>/= below it is created and owned
+  by that user.
+- *On by default.* An option to opt out at create (name to decide in 7.1). If =/var/container= is
+  missing, =create= refuses and prints the admin command above, rather than silently skipping the
+  mount.
+- *Lifecycle:* =create= makes =<user>/<containerName>/= if missing (=-n= shows that it would).
+  =delete= leaves it, and prints its path: the data outlives the container. =status= shows the
+  path. Removing the data is =rm -r= by the user; no verb for it.
+- *Ownership --- no image change, no rebuild:*
+  - *docker (privileged):* container UIDs are host UIDs; the container's =bystar= is UID 1000
+    (=useradd= without =-u= in the confined =Dockerfile=; confirm with =id bystar=), the host
+    user U may differ. =create= gives the directory POSIX ACLs, access and default, for U and for
+    UID 1000: =setfacl -m u:U:rwx,u:1000:rwx,d:u:U:rwx,d:u:1000:rwx <dir>=. Files the container
+    writes show as UID 1000 on the host, and U can still read, edit and delete them (and the other
+    way round). Needs =setfacl= (Debian package =acl=) and ACL support on the filesystem under
+    =/var= (ext4, xfs: yes). If U is 1000, the ACL is harmless.
+  - *podman (rootless-sysd):* =--userns=keep-id:uid=1000,gid=1000=, so the host user appears as
+    =bystar= inside and the files are simply the user's. Debian 13 (podman 5.4.2) is the primary
+    target; Debian 12 (podman 4.3.1) is not.
+- *Where it is declared:*
+  - docker: in each privileged leaf's =docker-compose.yml= and =docker-compose.cgv1.yml=, a volume
+    =/var/container/${USER}/<containerName>:/shuttle/share= --- the compose file stays the one
+    source of truth. Opting out needs it removed at create: compose cannot drop a volume by
+    override, so the opt-out path is a variable that defaults to the share, or a generated
+    override (decide in 7.1).
+  - podman: in the Quadlet =*.container= file (=Volume== and =UserNS==), which =containerManage.sh=
+    already reads for name and ports; =containerManage.sh= reads these too.
+  - =containerManage.sh= reads the path from the file, creates and ACLs the directory, and does
+    nothing for the confined leaves.
+- *bisos.dockerProc:* =instanceUp= creates the directory and sets the ACL the same way for
+  docker leaves (the compose file carries the volume), and passes =-v= / =--userns= for podman.
+  Same opt-out parameter. Its =cgroup v2 only= rule is unchanged.
+- *Fix regardless:* =common/raw-bisos/postRawBisos.sh= runs =sudo chown -R bystar:bystar
+  /shuttle/this=, which on a host where U ≠ 1000 changes the ownership of the leaf *in the git
+  checkout on the host*. Remove it; =/shuttle/share= must never be chowned either.
+
+Effort: small to medium. No image change. Compose and Quadlet edits in five leaves (deb12-sysd,
+deb13-sysd, deb13-sysd-2, two rootless), directory + ACL logic in =containerManage.sh= and in
+=containerProc_csu.py=, docs. VM tests: docker with U = 1000 and U ≠ 1000; rootless podman on
+Debian 13.
+
+* Stage 7 TODOs
+
+** +
+** TODO [#A] <<7.1>> Decide the remaining points of =/shuttle/share= :aiAndMe:
+SCHEDULED: <2026-10-27 Tue>
+- Opt-out option name: =containerManage.sh --noShare create=? =instanceUp --share=false=?
+- Opt-out mechanism for docker: compose variable (e.g. =${SHUTTLE_SHARE:-/var/container/${USER}/<name>}=,
+  pointed at an empty throw-away dir when off), or =containerManage.sh= generating a one-line
+  override with the volume only when on (the volume then leaves =docker-compose.yml=)?
+- Should =containerManage.sh= offer to create =/var/container= itself with =sudo= (asking first),
+  or only print the command?
+----- AI Results: ------
+
+** TODO [#A] <<7.2>> Leaf files: the share in compose and Quadlet files :ai:
+SCHEDULED: <2026-10-27 Tue>
+- Privileged leaves (deb12-sysd, deb13-sysd, deb13-sysd-2): the volume in both compose files.
+- Rootless leaves: =Volume== and =UserNS=keep-id:uid=1000,gid=1000= in the Quadlet file.
+- Remove the =/shuttle/this= chown from =common/raw-bisos/postRawBisos.sh=.
+----- AI Results: ------
+
+** TODO [#A] <<7.3>> Standalone: =containerManage.sh= creates, ACLs and reports the share :ai:
+SCHEDULED: <2026-10-27 Tue>
+- =create=: refuse if =/var/container= is missing (print the admin command); make
+  =<user>/<containerName>/=; =setfacl= for docker leaves; podman =-v= + =--userns= from the Quadlet
+  file; the 7.1 opt-out. =-n= shows all of it.
+- =delete= prints the kept path; =status= shows it. Nothing for confined leaves.
+- Still one file, identical in every leaf. Leaf READMEs (the generator) and the bro_dockerfiles
+  README.
+----- AI Results: ------
+
+** TODO [#A] <<7.4>> =bisos.dockerProc= parity :ai:
+SCHEDULED: <2026-10-27 Tue>
+- =instanceUp=: the same directory, ACL, podman options and opt-out; =instanceStatus= shows the path;
+  =instanceDelete= prints it. Examples menu, README.
+----- AI Results: ------
+
+** TODO [#A] <<7.5>> VM tests :aiAndMe:
+SCHEDULED: <2026-10-27 Tue>
+- docker, host user UID 1000 and ≠ 1000: files written from either side are readable, editable and
+  deletable from the other; =delete= keeps the directory; a re-created instance sees the old files.
+- rootless podman on Debian 13: same checks, with =keep-id= and systemd as PID 1.
+- =/shuttle/this= ownership on the host is unchanged after =postRawBisos.sh=.
+----- AI Results: ------
+** -
+
+
+* Stage 8: Optional VNC Passwords
+
+Goal: an instance can have a VNC password, opt-in. *No password stays the default* --- it is the
+convenient way for local development and must not be lost. Both ways at parity.
+
+** Assessment (2026-10-26)
+
+Today: TigerVNC runs with =-SecurityTypes None --I-KNOW-THIS-IS-INSECURE= (=vncserver.service= in
+the sysd images, =entrypoint.sh= in the confined ones); =websockify= serves noVNC on 6901 and
+relays to 5901 with no authentication of its own. noVNC already prompts for a password whenever
+the VNC server asks for one, so *noVNC needs no change*.
+
+- *Mechanism (proposed):* the password lives in the container, at TigerVNC's standard
+  =~bystar/.config/tigervnc/passwd= (the format =vncpasswd= writes). A small start script in the
+  image, used by =vncserver.service= and by the confined entrypoint, picks the security type at
+  each start: file present → =-SecurityTypes VncAuth= (with that file); absent → =None= as today.
+  No password, no change in behaviour.
+- *Setting and clearing:* a new =containerManage.sh= verb, e.g. =vncPassword set|clear=: =set=
+  reads the password without echo, produces the file with the image's own =vncpasswd -f= (in a
+  throw-away =--rm= container, so no TigerVNC is needed on the host), copies it in with
+  =docker cp= / =podman cp= (works on a stopped container too), fixes its owner and mode (0600),
+  and restarts the instance. =clear= removes it and restarts. Using =cp= rather than =exec= avoids
+  the =podman exec= failure on Debian 12's podman 4.3.1. =status= shows "VNC auth: none |
+  password".
+- *Lifetime:* the file is in the container's writable layer: it survives stop/start/restart and is
+  lost on =delete=, like everything else in the container. (Alternative, if preferred: a host-side
+  file mounted at create. That ties it to create time and needs a place for secrets outside git.)
+- *bisos.dockerProc:* =containerProc_instanceVncPassword= with =set= / =clear=.
+- *Limits, to document:* classic VNC authentication uses only the first 8 characters of the
+  password, and it protects the password, not the traffic: VNC and noVNC still travel unencrypted.
+  For use over a network, keep using an SSH tunnel, or add TLS later (TigerVNC's VeNCrypt types
+  for viewers, =websockify --cert= for noVNC) --- out of scope here.
+- *Related, not in scope:* binding the published ports to =127.0.0.1= (from PriorAndSimilarArt.org)
+  is what makes the passwordless default safe on a shared VM; it could become a create option of
+  its own. The SSH password (=insecure=) and =root:password= in the confined =Dockerfile= are
+  separate.
+
+Effort: small to medium. One start script and the unit / entrypoint change (and a rebuild); one
+verb in each way; docs. Less than Stage 7: no UID questions.
+
+* Stage 8 TODOs
+
+** +
+** DONE [#A] <<8.1>> Decide the open points of VNC passwords :aiAndMe:
+CLOSED: [2026-10-26 Mon]
+SCHEDULED: <2026-10-27 Tue>
+- Password in the container (set with a verb, lost on delete), or a host-side file mounted at create?
+- Verb name: =vncPassword set|clear=?
+- Accept VncAuth's 8-character limit and no encryption for now (TLS later), or go to VeNCrypt now?
+- Add the =127.0.0.1= binding as a create option in this stage, or separately?
+----- AI Results: ------
+User decision (2026-10-26): all four recommendations accepted. Password in the container, set
+with a verb, lost on delete; verb =vncPassword set|clear= (=containerProc_instanceVncPassword
+set|clear=); classic VNC auth for now (8-character limit, no encryption; TLS a later stage); the
+=127.0.0.1= binding stays separate. "No password" is not an option but a state: no (or an empty)
+password file. Deviation found while implementing: TigerVNC keeps its files in =~/.vnc= on Debian
+12 and =~/.config/tigervnc= on 13, so the password is not in TigerVNC's own location but in one
+release-independent file, =/home/bystar/.config/bisosVncPasswd=, passed with =-rfbauth=.
+
+** DONE [#A] <<8.2>> Image side: VNC start script choosing the security type :ai:
+CLOSED: [2026-10-26 Mon]
+SCHEDULED: <2026-10-27 Tue>
+- Start script in the image; =vncserver.service= (privileged, rootless-sysd) and the confined
+  =entrypoint.sh= call it. Rebuild all images.
+----- AI Results: ------
+Done (bro_dockerfiles, uncommitted; *images not rebuilt here*). New
+=dockerConf/vncStart.sh= in both confined leaves, installed at =/usr/local/bin/vncStart.sh= by the
+confined Dockerfiles and inherited by the sysd images. It makes the password file =bystar='s (mode
+0600, via passwordless sudo: =cp= delivers it as root), then runs =vncserver= with
+=-SecurityTypes VncAuth -rfbauth <file>= if the file is non-empty, else =-SecurityTypes None= as
+before. Both confined =entrypoint.sh= and all five =vncserver.service= (privileged, rootless,
+sysd-2's unused copy) call it. Tested with a stand-in =vncserver=: no file, empty file, non-empty
+file. Rebuild every image (confined first) to get it.
+
+** DONE [#A] <<8.3>> Standalone and =bisos.dockerProc=: the password verb :ai:
+CLOSED: [2026-10-26 Mon]
+SCHEDULED: <2026-10-27 Tue>
+- =containerManage.sh vncPassword set|clear=; =status= shows the auth mode.
+- =containerProc_instanceVncPassword=; examples menu.
+- READMEs: how to set one, the 8-character limit, why an SSH tunnel is still advised.
+----- AI Results: ------
+Done. =containerManage.sh= (all 7 leaves, identical): =vncPassword set|clear= --- refuses on an
+image without =vncStart.sh= (with the rebuild command); =set= reads the password twice without echo,
+rejects empty or differing input, notes the 8-character limit, makes the file with the image's
+=vncpasswd -f= in =run --rm -i --network none= (password through stdin only), =cp=-s it in;
+=clear= copies an empty file; a running container is restarted. =-n= shows the commands without
+asking. Every run prints "VNC auth: none | password" (read with =cp <c>:<file> -=, so it works on
+stopped containers). bisos.dockerProc: =containerProc_instanceVncPassword= (same steps, =getpass=),
+=instanceStatus= prints the auth mode, examples menu entries. Docs: the leaf READMEs (generator;
+sysd-2 by hand), bro_dockerfiles README (Connecting, the verb mapping table), bisos.dockerProc
+README. Tested against fake engines: 13 standalone cases (set on running docker, mismatch, empty,
+old image, no instance, clear on stopped podman, =-n=, bad argument, sysd-2 uses the primary's
+image, the four auth-mode readings) and 10 =bisos.dockerProc= cases. Open: in sysd-2,
+=containerProc_instanceVncPassword= has the known numeric-suffix gap (wrong image name), like the
+other =.spcs= commands there.
+
+** TODO [#A] <<8.4>> VM tests :aiAndMe:
+SCHEDULED: <2026-10-27 Tue>
+- No password: unchanged (TigerVNC viewer and noVNC connect without a prompt).
+- Set: viewer and noVNC both prompt; a wrong password is refused; survives restart.
+- Clear: back to no prompt.
+----- AI Results: ------
+** -
+
+
+
+* Stage 9: Ordered, Gated Walks over the deb13 Tree --- Rebuild Images, Re-materialize Instances
+
+Goal: after a change that needs new images (e.g. Stage 8's =vncStart.sh=), one walk from
+=bro_dockerfiles/debian/13/= rebuilds the images in dependency order, and a second walk recreates
+only the instances that are stale *and* whose owner has enabled that, modelled on the CBM
+collective (=/bisos/platform/sys/cbm/collective/=: =cbmProc.control= gate, =cbmProc.status= log,
+=branchesOrdered=, =cbm_materialize= / =reMaterialize= / =unMaterialize=). Scope (user decision
+2026-10-26): *deb13 only*, *=bisos.dockerProc= only* --- the bash leaf scripts and deb12 stay as
+they are. The new verbs are generic; only the deb13 branch files get the ordering.
+
+** Why (assessment 2026-10-26)
+
+- *Images depend on each other:* confined first; privileged and rootless-sysd are =FROM= it;
+  =bisos_deb13-sysd-2= runs =bisos_deb13-sysd='s image. Today the walk order is discovery order.
+- *Rebuilding an image does not update its containers:* a container keeps the image it was
+  created from until it is deleted and created again; a restart is not enough.
+- *Recreating destroys the container's state*: the Raw-BISOS installation, the Stage 8 VNC
+  password, anything done inside. Hence the gate, with a safe default, and a read-only staleness
+  check to see what would be recreated before anything is. Stage 7's =/shuttle/share= is outside
+  the container and survives a recreate: the place for what should be kept.
+- *One user per VM* (user clarification 2026-10-26): each user has their own VM with their own
+  clone of bro_dockerfiles. Everything in a clone --- gates, logs, images, instances --- belongs to
+  that one user and that one VM. Gates and logs must not be pushed: they describe one VM.
+
+** Design
+
+- *Prerequisite --- the numeric-suffix rule in =paramsFromPlantPath()= (see Stage 6, 6.1):* for a
+  leaf =<primary>-<N>= the image is =<primary>='s, and =imageBuild= builds nothing there. Ports
+  (and container name) come from the leaf's compose file (docker) or Quadlet file (podman), as the
+  standalone scripts already read them, so =_PORT_TABLE= stops being a second source of truth.
+  Without this, a walk would build a separate =bisos_deb13-sysd-2= image from the leftover
+  =Dockerfile= and check the wrong ports.
+- *Order:* =branchesOrdered = [confined, privileged, rootless-sysd]= in
+  =debian/13/ftoBranchProc.spcs=; =leavesOrdered = [bisos_deb13-sysd, bisos_deb13-sysd-2]= in
+  =debian/13/privileged/vnc/xfce/= (or wherever the walker reads leaf order --- check
+  =bisos.fileObj=). deb12 untouched.
+- *Gate and log in the leaf, as in CBM:* next to the leaf's planted file, named after it ---
+  =dockerProc.control= / =dockerProc.status= in docker leaves, =podmanProc.control= /
+  =podmanProc.status= in rootless-sysd leaves:
+  : <leaf>/dockerProc.control   # enabled | available | disabled
+  : <leaf>/dockerProc.status    # timestamped lines, appended
+  States and default as in CBM: missing file = =available= (the walker skips; nothing destructive
+  happens until the user enables an instance). *Never pushed:* =*Proc.control= and =*Proc.status=
+  go into bro_dockerfiles' =.gitignore= (unlike bro_rawBisos, which commits its =cbmProc.*=: there
+  the files describe the platform tree; here they describe one VM).
+- *Gate code:* a small copy of =bisos.capability.cbmProc_seedInfo='s =controlRead= /
+  =controlWrite= / =statusWrite= in =bisos.dockerProc= (parameterized by directory), not a
+  cross-package change now; factoring it into a shared module is a later option.
+- *New =bisos.dockerProc= commands:*
+  | Cmnd                                    | Kind        | Does                                                         |
+  |-----------------------------------------+-------------+--------------------------------------------------------------|
+  | =containerProc_control=                 | read-only   | show this user's gate state for the instance                 |
+  | =containerProc_status=                  | read-only   | show this user's status log for the instance                 |
+  | =containerProc_enable= / =_disable= / =_available= | gate | set the gate                                        |
+  | =containerProc_imageIsStale=            | read-only   | image older than its base image (rebuild needed)             |
+  | =containerProc_instanceIsStale=         | read-only   | instance's image ID ≠ the tag's current image ID             |
+  | =containerProc_materialize=             | gated       | enabled → =instanceUp= (idempotent: running is a no-op)      |
+  | =containerProc_reMaterialize=           | gated       | enabled and stale → save VNC password, =instanceDelete=,     |
+  |                                         |             | =instanceUp=, restore VNC password; else skip (logged)       |
+  | =containerProc_unMaterialize=           | gated       | enabled → =instanceDelete=                                   |
+  Every gated run appends a status line: =ran: reMaterialize ok=, =skipped: control=available=,
+  =skipped: not stale=, =failed: ...=. The VNC password is the only in-container state preserved;
+  a Raw-BISOS installation is not (documented; the default gate protects it).
+- *The two walks (from =debian/13/=):*
+  : ./ftoBranchProc.spcs -i fto_forwardToLeaves --cmndName=containerProc_imageBuild          # A, ordered
+  : ./ftoBranchProc.spcs -i fto_forwardToLeaves --cmndName=containerProc_instanceIsStale     # look first
+  : ./ftoBranchProc.spcs -i fto_forwardToLeaves --cmndName=containerProc_reMaterialize       # B, gated
+  Phase A is not gated (building does not destroy an instance). On a VM it rebuilds that VM's
+  images only --- no cross-user effects.
+- *=walkExamples()=:* add the new verbs with tags (=read-only=, =control=, =destructive=), so
+  every branch's examples menu shows them.
+- *cgroup v2 only*, as all of =bisos.dockerProc= (since 2026-10-26).
+
+Effort: medium. The suffix rule and compose/Quadlet reading are the base; gate + log + seven
+verbs + staleness are mostly small; the ordering is two branch-file edits. VM tests on a deb13
+VM.
+
+* Stage 9 TODOs
+
+** +
+** DONE [#A] <<9.1>> Confirm the remaining Stage 9 points :aiAndMe:
+CLOSED: [2026-10-26 Mon]
+SCHEDULED: <2026-10-27 Tue>
+Decided 2026-10-26: CBM-like gate states and default; a copy of the gate code, not reuse; gate
+and log in the leaf, git-ignored; one user per VM, each with their own clone; deb13 and
+=bisos.dockerProc= only. To confirm:
+- Verb names as in the table above.
+- Gate file names =dockerProc.*= / =podmanProc.*= (after the planted file), or one name
+  =containerProc.*= for both.
+----- AI Results: ------
+Confirmed (user, 2026-10-26): names as proposed, plus generic *leaf* lifecycle verbs with the
+=fto_= prefix (=fto_prepare=, =fto_materialize=, =fto_reMaterialize=, =fto_unMaterialize=,
+=fto_clean=) as thin aliases; CBM adoption separate (AI-Outputs). Gate files named after the
+planted file (=dockerProc.*= / =podmanProc.*=). One change: the log command is
+=containerProc_statusLog=, because =containerProc_status= is the deprecated alias of
+=instanceStatus=. Concern noted on =fto_= (could read as a branch/walker command); accepted,
+documented as leaf verbs.
+
+** DONE [#A] <<9.2>> Numeric-suffix rule and ports from compose / Quadlet in =paramsFromPlantPath()= :ai:
+CLOSED: [2026-10-26 Mon]
+SCHEDULED: <2026-10-27 Tue>
+- =<primary>-<N>=: image = primary's; =containerProc_imageBuild= is a no-op there (says so, like
+  =imageBuild.sh=).
+- Container name and host ports read from =docker-compose.yml= / the Quadlet =*.container=;
+  =_PORT_TABLE= removed (or kept only as a fallback with a warning).
+- Re-run the existing fake-engine tests; add sysd-2 cases.
+----- AI Results: ------
+Done. =ContainerParams= gains =leafName=, =containerName=, =primaryLeaf=, =isSecondary=. Container
+name and host ports come from the leaf's =docker-compose.yml= / Quadlet =*.container= (same line
+rules as =containerManage.sh=; no PyYAML, see AI-Outputs); =_PORT_TABLE= is a fallback for leaves
+without such a file, never for a secondary. In =containerProc_csu.py= every container use of
+=p.imageName= became =p.containerName= (images stay =imageName=). Secondary leaves: =imageBuild=
+builds nothing, =imageDelete= / =fullClean= leave the shared image, commit snapshots are named
+after the leaf. Also: =imageBuild= now copies =common/raw-bisos= into a context whose Dockerfile
+=COPY=-s it (the known .spcs gap; phase A would otherwise fail at confined), including the
+confined base a rootless build makes. All seven leaves derive correctly (fresh 2228/5907/6907,
+sysd-2 = image bisos_deb13-sysd, container bisos_deb13-sysd-2, 2227/5906/6906).
+
+** DONE [#A] <<9.3>> Walk order in the deb13 branch files :ai:
+CLOSED: [2026-10-26 Mon]
+SCHEDULED: <2026-10-27 Tue>
+- =branchesOrdered= in =debian/13/ftoBranchProc.spcs=; leaf order for sysd before sysd-2.
+- Check with =fto_effectiveBranches= / =fto_effectiveLeaves= / =fto_treeList=.
+----- AI Results: ------
+Done. =branchesOrdered = [confined, privileged, rootless-sysd]= in
+=bro_dockerfiles/debian/13/ftoBranchProc.spcs=; =fto_effectiveBranches= lists them in that order.
+Leaf order: the walker sorts, which already puts =bisos_deb13-sysd= before =-sysd-2=; a
+=leavesOrdered= in the privileged branch would not reach them (they sit under =vnc/xfce/=, which
+has no branch file, and in-process recursion does not pass the ordering on). Comment in the file.
+
+** DONE [#A] <<9.4>> Gate and status log in the leaf; gate verbs :ai:
+CLOSED: [2026-10-26 Mon]
+SCHEDULED: <2026-10-27 Tue>
+- =containerProc_control=, =_status=, =_enable=, =_disable=, =_available=; files in the leaf.
+- =.gitignore= entries in bro_dockerfiles for =*Proc.control= and =*Proc.status=.
+----- AI Results: ------
+Done. Gate and log functions (=ControlState=, =controlRead/Write=, =statusRead/Write=) in
+=containerProc_seedInfo.py=, copied from the CBM pattern; files =<leaf>/dockerProc.control= /
+=.status= (=podmanProc.*= for rootless). Commands =containerProc_control=, =_statusLog=,
+=_enable=, =_available=, =_disable=. bro_dockerfiles =.gitignore=: the four gate/log names, and the
+copied =debian/*/confined/vnc/xfce/*/raw-bisos/= (it was not ignored before), checked with
+=git check-ignore=.
+
+** DONE [#A] <<9.5>> Staleness checks :ai:
+CLOSED: [2026-10-26 Mon]
+SCHEDULED: <2026-10-27 Tue>
+- =containerProc_imageIsStale= (image vs its base), =containerProc_instanceIsStale= (instance vs
+  tag). Exit status usable by walks; one-line verdict each.
+----- AI Results: ------
+Done. =containerProc_imageIsStale= (current | stale | notBuilt | secondary; by creation time against
+the base image, parsing docker's RFC 3339 and podman's Go time with offsets) and
+=containerProc_instanceIsStale= (current | stale | noInstance | notBuilt; container's image ID
+against the tag's).
+
+** DONE [#A] <<9.6>> Gated lifecycle: materialize, reMaterialize, unMaterialize :ai:
+CLOSED: [2026-10-26 Mon]
+SCHEDULED: <2026-10-27 Tue>
+- As in the Design table; =reMaterialize= keeps the VNC password across the recreate; every run
+  logged.
+- =walkExamples()= entries with tags; examples menu; README (bisos.dockerProc) and the "Use With
+  BISOS" section of bro_dockerfiles' README.
+----- AI Results: ------
+*Correction (2026-10-26, found in =bisos.fileObj= Stage 4):* the discovery rule is stricter than
+recorded below --- PyCS dispatches only top-level classes that are *direct* subclasses of
+=cs.Cmnd=. So the Stage 9 commands built on helper bases (=_GateSet=, =_StalenessCmnd=,
+=_GatedCmnd=), the =fto_*= aliases, and the "fixed" deprecated aliases were all *undispatchable*
+(the fake-engine tests called the classes directly and could not see it). Fixed: the bases are
+mixins (=_GateSetMixin=, =_StalenessMixin=, =_GatedMixin=), every command is =class x(Mixin,
+cs.Cmnd)=, aliases delegate (=_AliasMixin=, =_DeprecatedNameMixin=). Checked with the dispatcher's
+own rule: all 40 commands in =containerProc_csu.py= dispatchable; the fake-engine suites unchanged.
+Done. Gated =containerProc_materialize= (=instanceUp=, detached), =_reMaterialize= (no instance:
+up; current: nothing; stale: read VNC password, delete, create without start, password back,
+start), =_unMaterialize= (=instanceDelete=), =_imageClean= (refuses while any container uses the
+image; removes it and the copied =raw-bisos/=; nothing in a secondary). =instanceUp= /
+=instanceDelete= bodies factored into =_instanceUp(start=...)= / =_instanceDelete=. Status lines
+for every gated run and every =imageBuild=. =fto_*= aliases; =walkExamples()= and the leaf menu
+list everything. Found and fixed: PyCS discovers commands by scanning source for top-level
+=class= statements, so factory-made aliases are invisible --- the seven deprecated aliases
+(=containerProc_build=, ...) had never worked; all are plain classes now (AI-Outputs INFO). Docs:
+bisos.dockerProc README ("Walks: Gate, Staleness and the fto_ Lifecycle Verbs", secondary
+instances, Raw-BISOS copy), bro_dockerfiles README ("Use With BISOS"). Tested against stateful
+fake engines (=testStage9.py=, 30 cases: params of every leaf; prepare in a secondary and in
+confined with the raw-bisos copy; gate default/enable; materialize skipped/run; all staleness
+verdicts incl. both time formats; reMaterialize current / stale docker with password / stale
+podman / sysd-2; unMaterialize gated; clean refused/done/secondary; secondary-safe imageDelete and
+fullClean; a deprecated alias), plus the earlier 24 cases unchanged. *Not run on a daemon, and
+the real walker was not run with the source modules* (the venv here has a non-editable copy).
+
+** TODO [#A] <<9.7>> VM tests on a deb13 VM :aiAndMe:
+SCHEDULED: <2026-10-27 Tue>
+- Phase A from =debian/13/= (order: confined first); =instanceIsStale= walk; phase B with one
+  instance enabled, one available, one disabled --- only the enabled stale one is recreated;
+  status lines as expected; the VNC password survives; =/shuttle/share= content survives.
+- =git status= in the clone shows no gate or log files.
+----- AI Results: ------
+** -
+
+
+* Stage 10: Move the Generic Lifecycle Verbs to =bisos.fileObj= --- Points to =bisos.fileObj= Stage 4
+
+Goal: the generic part of Stage 9 --- the =fto_prepare= ... =fto_clean= vocabulary, the gate
+(=<plantStem>.control=), the status log (=<plantStem>.status=), the "gate, act, log" wrapper and
+the gate commands --- moves into =bisos.fileObj= (user decision 2026-10-26). This package keeps
+only *what the verbs do* for container leaves (=imageBuild=, =instanceUp=, the stale-instance
+re-create with the VNC password kept, =instanceDelete=, =imageClean=) and the container-specific
+staleness checks.
+
+*Where the work is:*
+- The design, for review: =/bisos/git/bxRepos/bisos-pip/fileObj/README.org=, section "Generic
+  Lifecycle Verbs --- fto_prepare ... fto_clean (Design, for Review)".
+- The implementation: =/bisos/git/bxRepos/bisos-pip/fileObj/AI-WorkPlan.org=, Stage 4 (4.1 review
+  ... 4.7 consumers adopt).
+- This stage: only this package's side, after =bisos.fileObj= Stage 4 has released 4.2--4.4.
+
+* Stage 10 TODOs
+
+** +
+** DONE [#B] <<10.1>> Switch to =bisos.fileObj='s lifecycle verbs :ai:
+CLOSED: [2026-10-26 Mon]
+SCHEDULED: <2026-10-27 Tue>
+Blocked on =bisos.fileObj= Stage 4 (4.2--4.4 released).
+- Register the actions with =ftoLeaf_seedInfo.setup(prepare=, materialize=, reMaterialize=,
+  unMaterialize=, clean=)= in =containerProc_csu.py=.
+- Add =bisos.fileObj.ftoLeaf_csu= to =containerProc-seed.cs='s =csuList= *spec*, and regenerate
+  the dblock (do not hand-edit it).
+- Remove this package's copies: the gate/log functions in =containerProc_seedInfo.py=, the
+  =fto_*= alias classes, =_GateSet= / =_GatedCmnd=. Keep =containerProc_materialize= ... as
+  aliases of the =fto_= verbs, or drop them (decide then); keep =containerProc_control= ... only
+  if =bisos.fileObj= names differ.
+- =walkExamples()=: append =ftoLeaf_seedInfo.lifecycleWalkExamples()= instead of listing the
+  verbs itself.
+- The deb13 walk then reads =./ftoBranchProc.spcs -i fto_prepare= (branch-side verbs).
+----- AI Results: ------
+Done in code (2026-10-26), *one step left for the user*: regenerate =containerProc-seed.cs='s
+=csuListImportPlus= dblock in Blee --- its =csuList= spec now lists =bisos.fileObj.ftoLeaf_csu=
+(added by me; the dblock itself was not regenerated: the user's regeneration landed in
+=bisos.fileObj='s =ftoBranch-seed.cs= instead, see below). Changes: =containerProc_csu.py=
+registers seven actions with =ftoLeaf_seedInfo.setup()= (=_lifecyclePrepare= =
+=containerProc_imageBuild=, =_lifecycleMaterialize=, =_lifecycleReMaterialize= (stale only, VNC
+password kept), =_lifecycleUnMaterialize=, =_lifecycleClean=, =_lifecycleVerify= =
+=instanceVerify=, =_lifecycleStatus= = =instanceStatus=); removed: this package's gate/log copy
+(=containerProc_seedInfo=), =containerProc_enable= / =_available= / =_disable= / =_control= /
+=_statusLog=, =containerProc_materialize= / =_reMaterialize= / =_unMaterialize= / =_imageClean=,
+the =fto_*= aliases, =imageBuild='s own status lines (14 commands fewer: 26, all dispatchable).
+Kept: the staleness checks, =_AliasMixin= (for the deprecated aliases). =walkExamples()= =
+=ftoLeaf_seedInfo.lifecycleWalkExamples()= + staleness + the rest; the leaf menu uses
+=ftoLeaf_seedInfo.lifecycleExamplesMenu()=. Behaviour now: =disabled= blocks =fto_prepare= too;
+=fto_verify= / =fto_status= exist. *Not done:* declaring =bisos.fileObj= as a requirement ---
+=setup.py='s =requires= is a dblock and there is no =requirements.txt=; for the user (also: drop
+=bisos.vagrantBaseBoxes=).
+Status 2026-10-26: =bisos.fileObj= Stage 4 is implemented (editable locally, not yet released).
+What remains before this TODO: the user regenerates =containerProc-seed.cs='s =csuListImportPlus=
+dblock in Blee after adding =bisos.fileObj.ftoLeaf_csu= to its =csuList= spec (=py-dblock.cs=
+cannot). Behaviour change to expect on switching: =disabled= then also blocks =fto_prepare= (today
+this package's =fto_prepare= ignores the gate), and =fto_verify= / =fto_status= become available
+(= =instanceVerify= / =instanceStatus=). Also: declare =bisos.fileObj= in =requirements.txt= (setup.py
+=requires= is dblock-generated; it also still lists =bisos.vagrantBaseBoxes=).
+
+** DONE [#B] <<10.2>> Re-test :ai:
+CLOSED: [2026-10-26 Mon]
+SCHEDULED: <2026-10-27 Tue>
+- The Stage 9 fake-engine suite (=testStage9.py=, scratch) against the switched code; the gate
+  files written must stay byte-compatible (=dockerProc.control=, =dockerProc.status=).
+- Docs: this package's README section "Walks: Gate, Staleness and the fto_ Lifecycle Verbs"
+  points to =bisos.fileObj='s README for the vocabulary; bro_dockerfiles' "Use With BISOS".
+----- AI Results: ------
+Done. Real dispatch and the real walker, with a scratch copy of =containerProc-seed.cs= as its
+regenerated dblock will be, over a copy of bro_dockerfiles' =debian/=, fake engines: leaf
+=fto_control=; branch =fto_materialize= (all skipped: available) with a summary per level in
+order confined, privileged, rootless-sysd; =fto_enable= on =privileged/= reaches both leaves;
+=fto_prepare= reaches every leaf (the actions refuse here --- this is a container on cgroup v1 ---
+and are logged =failed:=; sysd-2 =ran: ... No image of its own=). In-process fake-engine suite
+(=testStage10.py=, scratch): every case of =testStage9.py= through =ftoLeaf_csu='s =fto_*=, plus
+=disabled= blocks prepare and =fto_status=; the older suites unchanged. Docs: this README's
+"Walks" section, bro_dockerfiles README "Use With BISOS".
+** -
+
+
+* Stage 11: Complete RawBisos-Reconstruction in One Walk
+
+Goal: one walk does the whole reconstruction of every enabled leaf --- build the image, create a
+fresh instance, bootstrap BISOS inside it, verify --- instead of today's separate walks. Makes
+explicit what bro_dockerfiles' README now states (section "RawBisos-Reconstruction: BISOS's
+CI/CD", 2026-10-27): with =bisos.dockerProc= the tree is BISOS's CI/CD test matrix.
+
+Today: =fto_materialize= / =fto_reMaterialize= only create and start the instance. The bootstrap
+is the separate =containerProc_exec_installRawBisos= (=installRawBisos.sh=: fetch =raw-bisos.sh=
+from =bxGenesis/start=, run =installUnsitedBisos=), walked with =fto_forwardToLeaves=;
+=postRawBisos.sh= and the later stages are run by hand.
+
+* Stage 11 TODOs
+
+** +
+** TODO [#B] <<11.1>> Opt-in bootstrap after materialize :aiAndMe:
+SCHEDULED: <2026-10-28 Wed>
+Design, then implement (user decision 2026-10-27: (b) as a TODO, README documents today's steps):
+- *Opt-in, per leaf:* off by default --- a bootstrap downloads from GitHub and takes long. Where
+  the opt-in lives: a second word/line in =dockerProc.control= (needs =bisos.fileObj='s gate
+  format to allow it), a separate leaf file (e.g. =dockerProc.reconstruct=, git-ignored), or a walk
+  parameter (=--reconstruct=true=) --- decide.
+- *What runs:* after a successful =fto_materialize= (new instance) or =fto_reMaterialize=
+  (re-created instance), and not when the instance was already running/current:
+  =installRawBisos.sh=, then =postRawBisos.sh=, then the follow-on stages (to list: which BISOS
+  stages after =installUnsitedBisos=, and whether =raw-bisos.sh= has a non-interactive way to run
+  them). Each step a status line (=ran: bootstrap installRawBisos ok= ...), stop at the first
+  failure.
+- *Fix first:* =postRawBisos.sh='s =chown -R /shuttle/this= (Stage 7 note).
+- *exec vs ssh:* the bootstrap runs with =engine exec=; for rootless podman on Debian 12 (4.3.1)
+  =exec= is unreliable --- use ssh there, or Debian 13 only.
+- Keep =containerProc_exec_installRawBisos= for by-hand use; =rawBuildContainer.cs='s steps are
+  unchanged.
+- Docs: bro_dockerfiles README "RawBisos-Reconstruction" (drop "Planned"), this README.
+- Test on the deb13 VM (bro_dockerfiles Stage 6 environment).
+----- AI Results: ------
+** -
 
 
 # Local Variables:

@@ -63,11 +63,11 @@ This package is one of *four related pieces*. Each has a distinct job and none
 subsumes another. This package is the *framework*; =bro_dockerfiles= is the
 content it operates on.
 
-| Piece                                | Kind        | Job                                                                                                                                                                       |
-|--------------------------------------+-------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| =bisos.dockerProc= (*this package*)    | pip package | *Container framework.* The planted =dockerProc.spcs= / =podmanProc.spcs=, path-derived parameters, and the =containerProc_*= verbs that build / run / verify one leaf.       |
-| [[https://github.com/bxObjects/bro_dockerfiles][=bro_dockerfiles=]]                   | BRO (repo)  | *Container image specifications.* The six-leaf matrix --- Dockerfiles, systemd units, per-leaf assets, and the =~/raw-bisos= payload baked into each image.                  |
-| [[https://github.com/bisos-pip/fileObj][=bisos.fileObj=]]                      | pip package | *Generic tree walker.* FTO marker conventions plus =ftoBranchProc.spcs=, which applies one verb across every leaf beneath a branch. Domain-agnostic --- knows nothing about containers. |
+| Piece                               | Kind        | Job                                                                                                                                                                                                      |
+|-------------------------------------+-------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =bisos.dockerProc= (*this package*) | pip package | *Container framework.* The planted =dockerProc.spcs= / =podmanProc.spcs=, path-derived parameters, and the =containerProc_*= verbs that build / run / verify one leaf.                                   |
+| [[https://github.com/bxObjects/bro_dockerfiles][=bro_dockerfiles=]]                   | BRO (repo)  | *Container image specifications.* The six-leaf matrix --- Dockerfiles, systemd units, per-leaf assets, and the =~/raw-bisos= payload baked into each image.                                              |
+| [[https://github.com/bisos-pip/fileObj][=bisos.fileObj=]]                     | pip package | *Generic tree walker.* FTO marker conventions plus =ftoBranchProc.spcs=, which applies one verb across every leaf beneath a branch. Domain-agnostic --- knows nothing about containers.                  |
 | [[https://github.com/bisos/raw][=/bisos/core/raw/rebuild=]]           | git repo    | *RawBisos-Reconstruction --- BISOS's CI/CD.* =rawBuildBox.cs= / =rawBuildKvm.cs= / =rawBuildContainer.cs=: one uniform entry point for rebuilding Raw-BISOS on metal, in a KVM guest, or in a container. |
 
 This package and =bro_dockerfiles= are *jointly designed* and evolve together
@@ -256,17 +256,17 @@ then read the figure.
 
 *Legend:*
 
-| Element                   | Meaning                                                                  |
-|---------------------------+--------------------------------------------------------------------------|
-| Light-blue cluster (left) | *Remote User* --- corporate host, only port 22 outbound.                   |
+| Element                   | Meaning                                                                      |
+|---------------------------+------------------------------------------------------------------------------|
+| Light-blue cluster (left) | *Remote User* --- corporate host, only port 22 outbound.                     |
 | Pink cluster (middle)     | *Container Platform* --- the powerful VM; hosts engines, =.spcs=, registrar. |
-| Green cluster (right)     | *Container Instances* --- one image, many running instances per user.      |
-| Dashed border (registrar) | *Design-only in this phase* --- shape reserved, not yet implemented.       |
-| Yellow cylinder           | Persistent store / path-derived identity source.                         |
-| Salmon =rarrow= shape       | CS / =.spcs= dispatcher.                                                   |
-| Blue rectangle            | Engine / CLI parameter / port.                                           |
-| Purple edge               | ssh tunnel path (Remote User → Platform via port 22 → Instances).        |
-| Blue dashed edge          | Registrar read (design-only; two consumers: =.spcs= and Remote User).      |
+| Green cluster (right)     | *Container Instances* --- one image, many running instances per user.        |
+| Dashed border (registrar) | *Design-only in this phase* --- shape reserved, not yet implemented.         |
+| Yellow cylinder           | Persistent store / path-derived identity source.                             |
+| Salmon =rarrow= shape     | CS / =.spcs= dispatcher.                                                     |
+| Blue rectangle            | Engine / CLI parameter / port.                                               |
+| Purple edge               | ssh tunnel path (Remote User → Platform via port 22 → Instances).            |
+| Blue dashed edge          | Registrar read (design-only; two consumers: =.spcs= and Remote User).        |
 | Dotted "planted in" edge  | Which leaves in =bro_dockerfiles= plant which =.spcs=.                       |
 
 [[file:py3/images/containerProcArchitecture.png]]
@@ -322,7 +322,8 @@ then read the figure.
   The =dockerProc.spcs= and =podmanProc.spcs= planting, the seed's
   =build= / =composeUp= / =run= / =verify= commands, and =podmanHostVerify.cs=
   for host readiness are all in place. Verified on both docker
-  (deb13 privileged sysd, cgroup v1 + v2) and podman (deb13 rootless-sysd).
+  (deb13 privileged sysd) and podman (deb13 rootless-sysd). cgroup v2 hosts only
+  (cgroup v1 support was dropped 2026-10-26; see the notes on the command surface below).
 - Not yet implemented: everything downstream of *Platform Registrar*.
   Its shape is fixed in the figure so subsequent multi-tenant work can
   add it without redesign.
@@ -451,13 +452,13 @@ git clone https://github.com/bxObjects/bro_dockerfiles.git
 Each segment of the leaf path =debian/<release>/<profile>/vnc/xfce/<imageName>/=
 encodes one dimension of the container's configuration:
 
-| Path segment | Parameter derived                                               |
-|--------------+-----------------------------------------------------------------|
-| =debian=       | distro (anchor segment: =paramsFromPlantPath()= anchors on this)  |
-| =<release>=    | 12 or 13 → base OS, base image tag                              |
-| =<profile>=    | =confined= / =privileged= / =rootless-sysd= → engine, init, privilege |
-| =vnc/xfce=     | desktop type → VNC/noVNC ports, xstartup variant                |
-| =<imageName>=  | image name → DockerHub name, container name                     |
+| Path segment  | Parameter derived                                                     |
+|---------------+-----------------------------------------------------------------------|
+| =debian=      | distro (anchor segment: =paramsFromPlantPath()= anchors on this)      |
+| =<release>=   | 12 or 13 → base OS, base image tag                                    |
+| =<profile>=   | =confined= / =privileged= / =rootless-sysd= → engine, init, privilege |
+| =vnc/xfce=    | desktop type → VNC/noVNC ports, xstartup variant                      |
+| =<imageName>= | image name → DockerHub name, container name                           |
 
 From these, =paramsFromPlantPath()= derives: engine (docker vs podman),
 base image name, host port assignments (ssh / vnc / novnc), =--privileged=
@@ -468,16 +469,15 @@ for podman run, and cgroup-variant support.
 
 The =<profile>= path segment selects one of three init/isolation profiles:
 
-| Profile       | Engine | Init                       | Privilege    | Host cgroup                      |
-|---------------+--------+----------------------------+--------------+----------------------------------|
-| =confined=      | docker | =entrypoint.sh= (no systemd) | unprivileged | v1 or v2                         |
-| =privileged=    | docker | =/sbin/init= (systemd PID 1) | =--privileged= | v1 or v2 (v1 needs cgv1 overlay) |
-| =rootless-sysd= | podman | =/sbin/init= (systemd PID 1) | rootless     | v2 only                          |
+| Profile         | Engine | Init                         | Privilege      | Host cgroup |
+|-----------------+--------+------------------------------+----------------+-------------|
+| =confined=      | docker | =entrypoint.sh= (no systemd) | unprivileged   | v2          |
+| =privileged=    | docker | =/sbin/init= (systemd PID 1) | =--privileged= | v2          |
+| =rootless-sysd= | podman | =/sbin/init= (systemd PID 1) | rootless       | v2          |
 
 - *confined*: unprivileged, no systemd; services (VNC / noVNC / sshd)
   launched manually by =entrypoint.sh=.
 - *privileged*: full systemd as PID 1; runs =--privileged= on docker.
-  Requires the =docker-compose.cgv1.yml= overlay on cgroup-v1 hosts.
 - *rootless-sysd*: full systemd as PID 1, but *unprivileged* via
   rootless podman. Requires cgroup v2 with controller delegation.
   Motivated by the multi-tenant "N engineers on one shared VM" use
@@ -568,35 +568,36 @@ command.
 
 *Image commands (image = the built artefact):*
 
-| Command                       | Purpose                                                     |
-|-------------------------------+-------------------------------------------------------------|
-| =containerProc_imageBuild=    | =docker build= or =podman build=. =--noCache="true"= for clean build. |
-| =containerProc_imageDelete=   | =rmi= (image only; does NOT touch instances).               |
+| Command                     | Purpose                                                               |
+|-----------------------------+-----------------------------------------------------------------------|
+| =containerProc_imageBuild=  | =docker build= or =podman build=. =--noCache="true"= for clean build. |
+| =containerProc_imageDelete= | =rmi= (image only; does NOT touch instances).                         |
 
 *Instance commands (instance = a container built from the image):*
 
-| Command                         | Purpose                                                                    |
-|---------------------------------+----------------------------------------------------------------------------|
-| =containerProc_instanceUp=      | Docker: =docker compose up -d=. Podman: =podman run --systemd=always=.     |
-| =containerProc_instanceDown=    | Docker: =docker compose down=. Podman: =podman stop= (does NOT rm).        |
-| =containerProc_instanceDelete=  | Stop + remove instance (image preserved).                                  |
-| =containerProc_instanceRestart= | Stop + start in place (state preserved).                                   |
-| =containerProc_instancePs=      | =ps -a= filtered to this leaf's container name.                            |
-| =containerProc_instanceLogs=    | =logs= (=--follow="true"= to stream).                                      |
-| =containerProc_instanceExec=    | =exec -it <container> bash= (or =--execCmd=...= for other command).        |
+| Command                             | Purpose                                                                |
+|-------------------------------------+------------------------------------------------------------------------|
+| =containerProc_instanceUp=          | Docker: =docker compose up -d=. Podman: =podman run --systemd=always=. |
+| =containerProc_instanceDown=        | Docker: =docker compose down=. Podman: =podman stop= (does NOT rm).    |
+| =containerProc_instanceDelete=      | Stop + remove instance (image preserved).                              |
+| =containerProc_instanceRestart=     | Stop + start in place (state preserved).                               |
+| =containerProc_instanceVncPassword= | =set= / =clear= the optional VNC password (none by default).           |
+| =containerProc_instancePs=          | =ps -a= filtered to this leaf's container name.                        |
+| =containerProc_instanceLogs=        | =logs= (=--follow="true"= to stream).                                  |
+| =containerProc_instanceExec=        | =exec -it <container> bash= (or =--execCmd=...= for other command).    |
 
 *Verify + status:*
 
-| Command                        | Purpose                                                       |
-|--------------------------------+---------------------------------------------------------------|
+| Command                        | Purpose                                                             |
+|--------------------------------+---------------------------------------------------------------------|
 | =containerProc_instanceVerify= | Host-side smoke test: port + noVNC HTTP + SSH-based systemd checks. |
-| =containerProc_instanceStatus= | Engine inspect + SSH systemd status.                          |
+| =containerProc_instanceStatus= | Engine inspect, VNC auth mode, SSH systemd status.                  |
 
 *Combined:*
 
-| Command                     | Purpose                                                          |
-|-----------------------------+------------------------------------------------------------------|
-| =containerProc_fullClean=   | =instanceDelete= + =imageDelete= (from-scratch rebuild).         |
+| Command                   | Purpose                                                  |
+|---------------------------+----------------------------------------------------------|
+| =containerProc_fullClean= | =instanceDelete= + =imageDelete= (from-scratch rebuild). |
 
 Additional notes:
 
@@ -604,8 +605,77 @@ Additional notes:
   if it is missing from podman's store.
 - =instanceVerify= is *exec-free* for rootless (uses SSH instead of
   =podman exec=, which is unreliable on old Podman for systemd containers).
-- For docker leaves, =--cgroupVer="v1"= selects =docker-compose.cgv1.yml=
-  when the host is on cgroup v1.
+- *cgroup v2 hosts only.* Every engine-driving command refuses a cgroup v1 (or hybrid) host,
+  as it refuses to run inside a container. cgroup v1 is considered obsolete here. On a v1 host
+  (e.g. an old RHEL 8 VM) use the leaf's standalone =./imageBuild.sh= and =./containerManage.sh=
+  from bro_dockerfiles, which still run the privileged leaves there through
+  =docker-compose.cgv1.yml=.
+- =instanceUp= checks first, like the leaf's standalone =containerManage.sh create=, and if any
+  check fails reports every problem and changes nothing: the engine is usable, the leaf has its
+  =docker-compose.yml= (docker), the image is built (=instanceUp= never builds: compose runs with
+  =--no-build=), and none of the instance's host ports is in use. An instance that is already
+  running is left alone; a stopped one is started.
+- =instanceDown= and =instanceRestart= fail if the instance does not exist; =instanceDelete= then
+  has nothing to do.
+- *VNC password, optional.* No password is the default (convenient for local development):
+  the instance has no, or an empty, =/home/bystar/.config/bisosVncPasswd=, and the image's
+  =/usr/local/bin/vncStart.sh= runs TigerVNC with =-SecurityTypes None=. =instanceVncPassword set=
+  asks for a password (twice), makes the file with the image's own =vncpasswd -f= in a throw-away
+  container, =cp=-s it in and restarts a running instance; VNC viewers and noVNC then ask for it.
+  =clear= copies in an empty file. Same file and steps as the standalone =containerManage.sh
+  vncPassword set|clear=. The password is lost on =instanceDelete=; only its first 8 characters
+  count; VNC traffic is not encrypted (use an SSH tunnel across a network). =set= refuses on an
+  image built before =vncStart.sh= existed (2026-10-26).
+- *Secondary instances.* A leaf named =<primary>-<N>= (e.g. =bisos_deb13-sysd-2=) runs
+  =<primary>='s image: =paramsFromPlantPath()= gives it =imageName= = the primary's, and its own
+  =containerName= and host ports, read from the leaf's =docker-compose.yml= (or Quadlet
+  =*.container=) with the same line rules as the standalone =containerManage.sh=. There,
+  =imageBuild= builds nothing, =imageDelete= / =fullClean= leave the shared image alone. (The
+  ports of a primary leaf come from its file too; the old fixed port table is a fallback only.)
+- *Raw-BISOS payload.* =imageBuild= copies =bro_dockerfiles/common/raw-bisos= into a build
+  context whose =Dockerfile= does =COPY ./raw-bisos= (the confined leaves, and the confined base a
+  rootless build makes), as =imageBuild.sh= does.
+
+** Walks: the =fto_= Lifecycle Verbs (from =bisos.fileObj=), Gate, Staleness
+
+The generic lifecycle verbs --- =fto_prepare=, =fto_materialize=, =fto_reMaterialize=,
+=fto_unMaterialize=, =fto_clean=, =fto_verify=, =fto_status= --- their gate and their status log
+are defined by =bisos.fileObj= (its README, "Generic Lifecycle Verbs"): the seed's =csuList=
+includes =bisos.fileObj.ftoLeaf_csu=, and this package registers only what each verb does for a
+container leaf (=ftoLeaf_seedInfo.setup(...)= in =containerProc_csu.py=):
+
+| Verb                | Does here                                                         | Gate: runs when |
+|---------------------+-------------------------------------------------------------------+-----------------|
+| =fto_prepare=       | =containerProc_imageBuild= (a secondary leaf: nothing to build)   | not disabled    |
+| =fto_materialize=   | =instanceUp=, detached (idempotent)                               | enabled         |
+| =fto_reMaterialize= | stale instance only: re-create from the current image, VNC kept   | enabled         |
+| =fto_unMaterialize= | =instanceDelete= (image kept)                                     | enabled         |
+| =fto_clean=         | remove the image and the copied =raw-bisos/= (refused while used) | enabled         |
+| =fto_verify=        | =instanceVerify=                                                  | not disabled    |
+| =fto_status=        | =instanceStatus=                                                  | not disabled    |
+
+- *Gate and status log in the leaf:* =dockerProc.control= / =dockerProc.status= (=podmanProc.*=
+  in rootless-sysd leaves). =enabled= | =available= | =disabled=; missing = =available=;
+  =disabled= leaves the leaf completely alone. Commands (from =bisos.fileObj=): =fto_control=,
+  =fto_statusLog=, =fto_enable=, =fto_available=, =fto_disable=. One user per VM, each with their
+  own clone of bro_dockerfiles: the files describe that VM and are git-ignored there.
+- *Staleness, read-only (this package):* =containerProc_imageIsStale= (image older than its base:
+  rebuild due) and =containerProc_instanceIsStale= (instance on an older image than its tag:
+  re-create due).
+- *Re-create loses the container's state*, except the VNC password, which =fto_reMaterialize=
+  keeps; a Raw-BISOS installation inside is lost.
+- At a *branch*, the same =fto_*= names walk every leaf below and end with a summary read back
+  from the leaves' status logs (a walk's exit codes are not reliable).
+
+After a change that needs new images, from =bro_dockerfiles/debian/13/= (its branch file walks
+=confined= before =privileged= and =rootless-sysd=):
+
+#+begin_src bash
+./ftoBranchProc.spcs -i fto_prepare                                                   # A: images, in order
+./ftoBranchProc.spcs -i fto_forwardToLeaves --cmndName=containerProc_instanceIsStale  # look
+./ftoBranchProc.spcs -i fto_reMaterialize                                             # B: enabled + stale only
+./ftoBranchProc.spcs -i fto_statusLog                                                 # what happened
+#+end_src
 - The old flat names (=build=, =composeUp=, =composeDown=, =run=, =verify=,
   =status=, =clean=) are kept as deprecated aliases for one release ---
   they still work but emit a =DeprecationWarning=.
@@ -617,13 +687,6 @@ cd /bisos/git/bxRepos/bxObjects/bro_dockerfiles/debian/13/privileged/vnc/xfce/bi
 ./dockerProc.spcs -i containerProc_imageBuild
 ./dockerProc.spcs -i containerProc_instanceUp
 ./dockerProc.spcs -i containerProc_instanceVerify
-#+end_src
-
-On a cgroup-v1 host (e.g. RHEL 8), pass =cgroupVer=v1= to instance up/down:
-
-#+begin_src bash
-./dockerProc.spcs -i containerProc_instanceUp   --cgroupVer="v1"
-./dockerProc.spcs -i containerProc_instanceDown --cgroupVer="v1"
 #+end_src
 
 For rootless-sysd (podman) leaves:

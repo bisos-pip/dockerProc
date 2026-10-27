@@ -25,6 +25,7 @@ csInfo['status']  = 'inDev'
 import typing
 import enum
 import pathlib
+import re
 from dataclasses import dataclass, field
 
 from bisos.csSeed import seedsLib
@@ -59,7 +60,10 @@ class DesktopType(enum.Enum):
 
 
 ###############################################################################
-# Port assignments — derived from release + profile
+# Port assignments --- FALLBACK only. The leaf's own file is the source of truth:
+# docker-compose.yml (docker) or the Quadlet *.container (podman), read by
+# _leafFileFacts() below, exactly as the standalone containerManage.sh reads them.
+# This table is used only when a leaf has no such file (e.g. a unit test path).
 # Ports are host-side; container-side are always 22/5901/6901
 ###############################################################################
 
@@ -67,12 +71,13 @@ _PORT_TABLE: dict[tuple[str, Profile], dict[str, int]] = {
     ("12", Profile.Confined):      {"ssh": 2222, "vnc": 5901, "novnc": 6901},
     ("12", Profile.Privileged):    {"ssh": 2223, "vnc": 5902, "novnc": 6902},
     ("12", Profile.RootlessSysd):  {"ssh": 2225, "vnc": 5904, "novnc": 6904},
-    ("13", Profile.Confined):      {"ssh": 2222, "vnc": 5901, "novnc": 6901},
+    ("13", Profile.Confined):      {"ssh": 2228, "vnc": 5907, "novnc": 6907},
     ("13", Profile.Privileged):    {"ssh": 2224, "vnc": 5903, "novnc": 6903},
     ("13", Profile.RootlessSysd):  {"ssh": 2226, "vnc": 5905, "novnc": 6905},
 }
 
-# 13-2 -- 2227  5906 6906
+# Secondary instances (e.g. bisos_deb13-sysd-2: 2227 5906 6906) are not in this table;
+# their ports come from their compose file.
 
 
 _BASE_IMAGE_TABLE: dict[tuple[str, Profile], str] = {
@@ -95,7 +100,10 @@ class ContainerParams:
     release: str = ""          # "12" or "13"
     profile: Profile | None = None
     desktopType: DesktopType = DesktopType.VncXfce
-    imageName: str = ""        # e.g. "bisos_deb13-sysd"
+    imageName: str = ""        # e.g. "bisos_deb13-sysd" (a secondary leaf: its primary's)
+    leafName: str = ""         # the leaf directory, e.g. "bisos_deb13-sysd-2"
+    containerName: str = ""    # from the compose / Quadlet file; default the leaf name
+    primaryLeaf: str = ""      # for a secondary leaf <primary>-<N>: "<primary>"; else ""
 
     # Derived
     engine: Engine | None = None
@@ -107,6 +115,54 @@ class ContainerParams:
 
     # The raw plant path (for diagnostics)
     plantPath: str = ""
+
+    @property
+    def isSecondary(self) -> bool:
+        """A leaf named <primary>-<N> runs <primary>'s image and builds none of its own."""
+        return bool(self.primaryLeaf)
+
+
+###############################################################################
+# _leafFileFacts --- container name and host ports from the leaf's own file.
+# Same rules as bro_dockerfiles' containerManage.sh (simple line matching, no
+# YAML library: PyYAML is not a declared dependency of this package).
+###############################################################################
+
+_CONTAINER_PORT_KEYS = {"22": "ssh", "5901": "vnc", "6901": "novnc"}
+
+
+def _leafFileFacts(leafDir: pathlib.Path, engine: "Engine") -> dict[str, typing.Any]:
+    """{'containerName': str|None, 'image': str|None, 'ports': {'ssh': N, ...}, 'source': path|None}.
+
+    docker: docker-compose.yml --- container_name:, image:, port lines "- \"2224:22\"".
+    podman: the one *.container (Quadlet) --- ContainerName=, PublishPort=2226:22.
+    """
+    facts: dict[str, typing.Any] = {'containerName': None, 'image': None, 'ports': {}, 'source': None}
+    if engine == Engine.Docker:
+        source = leafDir / "docker-compose.yml"
+        if not source.is_file():
+            return facts
+        text = source.read_text()
+        m = re.search(r'^\s*container_name:\s*"?([^"\s#]+)', text, re.M)
+        facts['containerName'] = m.group(1) if m else None
+        m = re.search(r'^\s*image:\s*"?([^"\s#]+)', text, re.M)
+        facts['image'] = m.group(1) if m else None
+        pairs = re.findall(r'^\s*-\s*"?(\d+):(\d+)', text, re.M)
+    else:
+        quadlets = sorted(leafDir.glob("*.container"))
+        if len(quadlets) != 1:
+            return facts
+        source = quadlets[0]
+        text = source.read_text()
+        m = re.search(r'^ContainerName=\s*(\S+)', text, re.M)
+        facts['containerName'] = m.group(1) if m else None
+        pairs = re.findall(r'^PublishPort=\s*(\d+):(\d+)', text, re.M)
+    facts['source'] = source
+    for hostPort, containerPort in pairs:
+        key = _CONTAINER_PORT_KEYS.get(containerPort)
+        if key is not None:
+            facts['ports'][key] = int(hostPort)
+    return facts
 
 
 ###############################################################################
@@ -150,7 +206,7 @@ def paramsFromPlantPath(plantPath: str | None = None) -> ContainerParams:
         profileStr = parts[anchor + 2]       # "confined" / "privileged" / "rootless-sysd"
         desktopPart1 = parts[anchor + 3]     # "vnc"
         desktopPart2 = parts[anchor + 4]     # "xfce"
-        imageName = parts[anchor + 5]        # "bisos_deb13-sysd"
+        leafName = parts[anchor + 5]         # "bisos_deb13-sysd" or "bisos_deb13-sysd-2"
     except IndexError as exc:
         raise ValueError(
             f"Plant path too short after 'debian' segment: {plantPath}"
@@ -184,25 +240,33 @@ def paramsFromPlantPath(plantPath: str | None = None) -> ContainerParams:
     }
     engine = engineMap[profile]
 
-    # Ports
+    # A numeric suffix means a secondary instance: <primary>-<N> runs <primary>'s image.
+    m = re.fullmatch(r'(.+)-(\d+)', leafName)
+    primaryLeaf = m.group(1) if m else ""
+    imageName = primaryLeaf or leafName
+
+    # Container name and host ports: the leaf's own compose / Quadlet file first.
     portKey = (release, profile)
-    if portKey not in _PORT_TABLE:
+    facts = _leafFileFacts(resolvedDir, engine)
+    if facts['source'] is not None and len(facts['ports']) == 3:
+        ports = facts['ports']
+    elif portKey in _PORT_TABLE and not primaryLeaf:
+        ports = _PORT_TABLE[portKey]
+    else:
         raise ValueError(
-            f"No port mapping for release={release}, profile={profile}: {plantPath}"
+            f"No host ports for {leafName}: its docker-compose.yml / *.container does not "
+            f"publish 22, 5901 and 6901, and it has no fallback entry: {plantPath}"
         )
-    ports = _PORT_TABLE[portKey]
+    containerName = facts['containerName'] or leafName
 
     # Base image
     baseImage = _BASE_IMAGE_TABLE.get(portKey, "")
 
-    # cgroup variants supported
-    cgroupVariants: list[CgroupVer] = []
-    if profile == Profile.Confined:
-        cgroupVariants = [CgroupVer.V1, CgroupVer.V2]
-    elif profile == Profile.Privileged:
-        cgroupVariants = [CgroupVer.V1, CgroupVer.V2]
-    elif profile == Profile.RootlessSysd:
-        cgroupVariants = [CgroupVer.V2]   # v1 does not support rootless delegation
+    # cgroup variants supported by bisos.dockerProc: v2 only, for every profile.
+    # cgroup v1 is obsolete here (the containerProc_* commands refuse a v1 host);
+    # the leaves' standalone scripts still run privileged leaves on v1 through
+    # docker-compose.cgv1.yml.
+    cgroupVariants: list[CgroupVer] = [CgroupVer.V2]
 
     return ContainerParams(
         distro="debian",
@@ -210,6 +274,9 @@ def paramsFromPlantPath(plantPath: str | None = None) -> ContainerParams:
         profile=profile,
         desktopType=DesktopType.VncXfce,
         imageName=imageName,
+        leafName=leafName,
+        containerName=containerName,
+        primaryLeaf=primaryLeaf,
         engine=engine,
         sshPort=ports["ssh"],
         vncPort=ports["vnc"],
@@ -219,6 +286,12 @@ def paramsFromPlantPath(plantPath: str | None = None) -> ContainerParams:
         plantPath=plantPath,
     )
 
+
+###############################################################################
+# Gate and status log: provided by bisos.fileObj (ftoLeaf_seedInfo), with the
+# generic lifecycle verbs. The files are <leaf>/dockerProc.control / .status
+# (podmanProc.* in rootless-sysd leaves), git-ignored in bro_dockerfiles.
+###############################################################################
 
 ###############################################################################
 # ContainerProcSeedInfo — seed-level setup (examplesFuncsList plumbing)
@@ -289,10 +362,24 @@ def walkExamples() -> list:
     module-load time (the seedInfo is used in contexts without fileObj too).
     """
     from bisos.fileObj.ftoBranch_seedInfo import WalkExampleSpec
+    from bisos.fileObj import ftoLeaf_seedInfo
 
     # Ordered by lifecycle stage. Tags allow future filtering
     # (e.g. read-only vs destructive).
-    return [
+    # The generic lifecycle verbs and gate commands (bisos.fileObj) first; at a branch
+    # the same names also work directly: ./ftoBranchProc.spcs -i fto_prepare.
+    return ftoLeaf_seedInfo.lifecycleWalkExamples() + [
+        # -- Staleness (read-only; what fto_reMaterialize would re-create) ----
+        WalkExampleSpec(
+            cmndName='containerProc_instanceIsStale',
+            comment="# which instances run an older image than their tag",
+            tags=frozenset({'read-only'}),
+        ),
+        WalkExampleSpec(
+            cmndName='containerProc_imageIsStale',
+            comment="# which images are older than their base",
+            tags=frozenset({'read-only'}),
+        ),
         # -- Read-only (safe to walk everywhere) ------------------------------
         WalkExampleSpec(
             cmndName='containerProc_instancePs',

@@ -105,7 +105,7 @@ aptPkgsList = [
     ap("slirp4netns"),       # rootless networking / port forwarding
     ap("passt"),             # provides pasta — preferred rootless net on deb13
 
-    # Multi-arch image builds (build.bash without -d, linux/amd64,arm64).
+    # Multi-arch image builds (imageBuild.sh -u, linux/amd64,arm64).
     ap("qemu-user-static"),  # cross-arch emulation
     ap("binfmt-support"),    # binfmt registration for qemu-user-static
 

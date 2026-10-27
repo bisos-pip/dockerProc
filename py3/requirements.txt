@@ -1,0 +1,10 @@
+bisos
+bisos.b
+bisos.basics
+bisos.common
+bisos.csPlayer
+bisos.csSeed
+bisos.debian
+bisos.fileObj
+bisos.sbom
+bisos.vagrantBaseBoxes

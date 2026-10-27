@@ -8,7 +8,7 @@
 #
 # Lives in the bisos.dockerProc package bin/ alongside dockerProc-sbom.cs
 # (also host-provisioning scoped). Image-specific concerns (base image
-# presence, etc.) belong in each image dir's build.bash / verify.sh, not here.
+# presence, etc.) belong in each image dir's imageBuild.sh / verify.sh, not here.
 #
 # Usage:   ./hostPodmanVerify.sh
 # Exit:    0 = GO (all hard requirements met), non-zero = NO-GO.

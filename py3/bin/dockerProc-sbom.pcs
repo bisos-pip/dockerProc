@@ -68,7 +68,7 @@ aptPkgsList = [
     ap("docker-buildx-plugin"),
     ap("docker-compose-plugin"),
 
-    # Multi-arch image builds (build.bash without -d, linux/amd64,arm64).
+    # Multi-arch image builds (imageBuild.sh -u, linux/amd64,arm64).
     ap("qemu-user-static"),   # cross-arch emulation
     ap("binfmt-support"),     # binfmt registration for qemu-user-static
 ]

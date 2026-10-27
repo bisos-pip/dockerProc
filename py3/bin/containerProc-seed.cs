@@ -58,24 +58,26 @@ import sys
   (list
    "bisos.csPlayer.csxuFps_csu"
    "bisos.dockerProc.containerProc_csu"
+   "bisos.fileObj.ftoLeaf_csu"
    "plantedCsu"
  ))
 #+END_SRC
+
+#+RESULTS:
+| bisos.csPlayer.csxuFps_csu | bisos.dockerProc.containerProc_csu | bisos.fileObj.ftoLeaf_csu | plantedCsu |
+
 #+end_org """
 
 ####+BEGIN: b:py3:cs:framework/csuListImportPlus :pyImports t :csuImports t :csuParams t
 """ #+begin_org
-*  CsFrmWrk  ~Process CSU List~
+*  _[[elisp:(blee:menu-sel:outline:popupMenu)][±]]_ _[[elisp:(blee:menu-sel:navigation:popupMenu)][Ξ]]_ [[elisp:(outline-show-branches+toggle)][|=]] [[elisp:(bx:orgm:indirectBufOther)][|>]] *[[elisp:(blee:ppmm:org-mode-toggle)][|N]]*  CsFrmWrk   [[elisp:(outline-show-subtree+toggle)][||]] ~Process CSU List~ with /4/ in csuList pyImports=t csuImports=t csuParams=t
 #+end_org """
 
 from bisos.csPlayer import csxuFps_csu
 from bisos.dockerProc import containerProc_csu
+from bisos.fileObj import ftoLeaf_csu
 
-csuList = [
-    'bisos.csPlayer.csxuFps_csu',
-    'bisos.dockerProc.containerProc_csu',
-    'plantedCsu',
-]
+csuList = [ 'bisos.csPlayer.csxuFps_csu', 'bisos.dockerProc.containerProc_csu', 'bisos.fileObj.ftoLeaf_csu', 'plantedCsu', ]
 
 if seedsLib.seededCsxuInfo.plantOfThisSeed is None:
     csuList.remove('plantedCsu')
