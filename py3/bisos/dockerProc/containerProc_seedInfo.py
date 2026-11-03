@@ -462,6 +462,11 @@ def walkExamples() -> list:
             comment="# cd ~/raw-bisos && bash installRawBisos.sh",
             tags=frozenset({'destructive', 'install'}),
         ),
+        WalkExampleSpec(
+            cmndName='containerProc_exec_sysCbmFullyMaterialize',
+            comment="# cd ~/raw-bisos && bash sysCbmFullyMaterialize.sh (after down+up)",
+            tags=frozenset({'destructive', 'install'}),
+        ),
     ]
 
 

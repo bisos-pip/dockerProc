@@ -772,14 +772,18 @@ class containerProc_instancePs(cs.Cmnd):
         cmndOutcome: b.op.Outcome,
         argsList: typing.Optional[list[str]] = None,
     ) -> b.op.Outcome:
-        """engine ps -a --filter name=<container>."""
+        """engine ps -a --filter name=^<container>$.
+
+        The name filter is a regex substring match, so it is anchored: unanchored,
+        leaf bisos_deb13-sysd also listed sibling leaf bisos_deb13-sysd-2.
+        """
         callParamsDict = {}
         if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
             return b_io.eh.badOutcome(cmndOutcome)
 
         p = _params()
         engine = p.engine.value
-        _run([engine, 'ps', '-a', '--filter', f'name={p.containerName}'])
+        _run([engine, 'ps', '-a', '--filter', f'name=^{p.containerName}$'])
         return cmndOutcome.set(opError=b.op.OpError.Success, opResults="listed")
 
 
@@ -914,6 +918,49 @@ class containerProc_exec_installRawBisos(cs.Cmnd):
         return cmndOutcome.set(
             opError=b.op.OpError.Success,
             opResults="ran installRawBisos.sh",
+        )
+
+
+class containerProc_exec_sysCbmFullyMaterialize(cs.Cmnd):
+    """Run ~/raw-bisos/sysCbmFullyMaterialize.sh inside the running container.
+
+    sysCbmFullyMaterialize.sh (part of the image at /home/<user>/raw-bisos/)
+    runs =sysCbmManage.cs -i fullyMaterialize= in a forced-interactive shell, so
+    bystar's PATH and nvm (set in ~/.bashrc past its non-interactive guard) apply.
+    Run after containerProc_exec_installRawBisos and an instance down+up.
+
+    Roughly equivalent to:
+      <engine> exec -u bystar <container> bash -l -c 'cd ~/raw-bisos && bash sysCbmFullyMaterialize.sh'
+    """
+    cmndParamsMandatory = []
+    cmndParamsOptional = []
+    cmndArgsLen = {'Min': 0, 'Max': 0}
+
+    @cs.track(fnLoc=True, fnEntry=True, fnExit=True)
+    def cmnd(
+        self,
+        rtInv: cs.RtInvoker,
+        cmndOutcome: b.op.Outcome,
+        argsList: typing.Optional[list[str]] = None,
+    ) -> b.op.Outcome:
+        """engine exec -u bystar <container> bash -l -c 'cd ~/raw-bisos && bash sysCbmFullyMaterialize.sh'."""
+        callParamsDict = {}
+        if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
+            return b_io.eh.badOutcome(cmndOutcome)
+
+        p = _params()
+        engine = p.engine.value
+        # As in containerProc_exec_installRawBisos: -u bystar, and no -t.
+        result = _run(
+            [engine, 'exec', '-u', 'bystar', p.containerName,
+             'bash', '-l', '-c', 'cd ~/raw-bisos && bash sysCbmFullyMaterialize.sh'],
+            check=False,
+        )
+        if result.returncode != 0:
+            return b_io.eh.badOutcome(cmndOutcome)
+        return cmndOutcome.set(
+            opError=b.op.OpError.Success,
+            opResults="ran sysCbmFullyMaterialize.sh",
         )
 
 
@@ -1939,6 +1986,8 @@ def examples_csu() -> None:
     cs.examples.menuSection('Install (one-shot inside container)')
     cmnd('containerProc_exec_installRawBisos',
          comment="# cd ~/raw-bisos && bash installRawBisos.sh")
+    cmnd('containerProc_exec_sysCbmFullyMaterialize',
+         comment="# cd ~/raw-bisos && bash sysCbmFullyMaterialize.sh (after down+up)")
 
     cmnd('containerProc_instanceDelete', comment="# stop + rm instance (keeps image)")
 
@@ -2024,6 +2073,7 @@ def _examplesUnfiltered() -> None:
     cmnd('containerProc_instanceExec')
     cs.examples.execInsert("dockerProc.spcs -i containerProc_instanceExec -- uname -a")
     cmnd('containerProc_exec_installRawBisos')
+    cmnd('containerProc_exec_sysCbmFullyMaterialize')
     cmnd('containerProc_instanceDelete')
     cmnd('containerProc_instanceVncPassword', args="set")
     cmnd('containerProc_instanceVncPassword', args="clear")

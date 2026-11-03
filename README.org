@@ -156,6 +156,9 @@ service, no VM lifecycle. The six =bro_dockerfiles= leaves
 : ./dockerProc.spcs -i containerProc_imageBuild
 : ./dockerProc.spcs -i containerProc_instanceUp
 : ./dockerProc.spcs -i containerProc_exec_installRawBisos    # bxGenesis bootstrap inside container
+: ./dockerProc.spcs -i containerProc_instanceDown           # then instanceUp: new groups take effect
+: ./dockerProc.spcs -i containerProc_instanceUp
+: ./dockerProc.spcs -i containerProc_exec_sysCbmFullyMaterialize  # sysCbmManage.cs -i fullyMaterialize, as bystar
 : ./dockerProc.spcs -i containerProc_instanceVerify
 : ./dockerProc.spcs -i containerProc_fullClean
 
@@ -578,13 +581,20 @@ command.
 | Command                             | Purpose                                                                |
 |-------------------------------------+------------------------------------------------------------------------|
 | =containerProc_instanceUp=          | Docker: =docker compose up -d=. Podman: =podman run --systemd=always=. |
-| =containerProc_instanceDown=        | Docker: =docker compose down=. Podman: =podman stop= (does NOT rm).    |
+| =containerProc_instanceDown=        | Docker: =docker compose stop=. Podman: =podman stop= (does NOT rm).    |
 | =containerProc_instanceDelete=      | Stop + remove instance (image preserved).                              |
 | =containerProc_instanceRestart=     | Stop + start in place (state preserved).                               |
 | =containerProc_instanceVncPassword= | =set= / =clear= the optional VNC password (none by default).           |
-| =containerProc_instancePs=          | =ps -a= filtered to this leaf's container name.                        |
+| =containerProc_instancePs=          | =ps -a= filtered to exactly this leaf's container (=name=^<c>$=).      |
 | =containerProc_instanceLogs=        | =logs= (=--follow="true"= to stream).                                  |
 | =containerProc_instanceExec=        | =exec -it <container> bash= (or =--execCmd=...= for other command).    |
+
+*Exec (one-shot scripts of =~/raw-bisos= inside the container, as bystar):*
+
+| Command                                      | Purpose                                                          |
+|----------------------------------------------+------------------------------------------------------------------|
+| =containerProc_exec_installRawBisos=         | =installRawBisos.sh= --- the bxGenesis Raw-BISOS bootstrap.      |
+| =containerProc_exec_sysCbmFullyMaterialize=  | =sysCbmFullyMaterialize.sh= --- =sysCbmManage.cs -i fullyMaterialize=; after the bootstrap and a down + up. |
 
 *Verify + status:*
 

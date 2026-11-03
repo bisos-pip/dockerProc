@@ -127,8 +127,11 @@ unexpected path.
 - =containerProc_instanceUp= --- checks (engine, compose file, image built, host ports free), then
   create + start; =instanceDown= / =instanceRestart= / =instanceDelete=.
 - =containerProc_instanceVncPassword= --- =set= / =clear= the optional VNC password (by =cp=).
-- =containerProc_instancePs= / =instanceLogs= / =instanceExec= --- inspection.
+- =containerProc_instancePs= / =instanceLogs= / =instanceExec= --- inspection. =instancePs=
+  filters =name=^<container>$= (anchored, so a secondary leaf =<primary>-<N>= is not listed).
 - =containerProc_exec_installRawBisos= --- run =installRawBisos.sh= in the container.
+- =containerProc_exec_sysCbmFullyMaterialize= --- run =~/raw-bisos/sysCbmFullyMaterialize.sh=
+  (=sysCbmManage.cs -i fullyMaterialize=) as bystar; after =installRawBisos= + down/up.
 - =containerProc_instanceVerify= / =instanceStatus= --- ports, noVNC, systemd via ssh / state and
   VNC auth mode.
 - =containerProc_instanceCommit= / =imageSave= --- snapshot / save to the backups dir.
@@ -222,6 +225,23 @@ Key risk points:
    failure); should be exercised with both docker (multi-user, likely
    root-owned =/bisos/var/=) and podman (user-owned) contexts.
 
+* Recent Changes (2026-11-03) --- from the bisos/raw/rebuild session
+
+Driven by =bisos/raw/rebuild/rawBuildContainer.cs= (its AI-WorkPlan =<<containerIdentity>>=).
+- =containerProc_instancePs= :: =--filter name=<container>= is a regex substring match, so
+  =bisos_deb13-sysd= also listed =bisos_deb13-sysd-2=. Now anchored =name=^<container>$=
+  (tested on docker and podman).
+- NEW =containerProc_exec_sysCbmFullyMaterialize= :: mirrors =exec_installRawBisos=; runs
+  =bash -l -c 'cd ~/raw-bisos && bash sysCbmFullyMaterialize.sh'= as =-u bystar=, no =-t=,
+  propagates exit. Added to both example menus and to =walkExamples()= (tags destructive,
+  install). The script is new in bro_dockerfiles =common/raw-bisos/=; images built before
+  it lack it. Verified live on deb13 sysd-priv (script docker-cp'd in): exit 0.
+- Found, NOT fixed :: =containerProc_instanceVerify= checks =vncserver@:1.service= (and
+  =instanceStatus= runs =systemctl status vncserver@:1=), but the sysd leaves now ship
+  =vncserver.service= --- verify FAILS on healthy sysd leaves. Also verify right after a fresh
+  =instanceUp= races systemd boot (=is-system-running='starting'=). Tracked in bisos/raw/rebuild
+  AI-WorkPlan =<<verifyUpFixes>>=.
+
 * Key Design Decisions
 
 - *Package name =bisos.dockerProc=, internal prefix =containerProc_=* — external name
@@ -304,6 +324,9 @@ Key risk points:
 - =bisos.fileObj= =README.org= "Generic Lifecycle Verbs" and its AI-WorkPlan Stage 4: the =fto_=
   verbs this package plugs into.
 - bro_dockerfiles =AI-WorkPlan.org= Stages 6 and 7: the VM test plans for this package's work.
+- =bisos/raw/rebuild= =AI-WorkPlan.org= =<<containerIdentity>>= (done) and =<<verifyUpFixes>>=
+  (open, 2026-11-03): the =instancePs= / =exec_sysCbmFullyMaterialize= changes above, and the
+  stale =vncserver@:1= check in =instanceVerify= / =instanceStatus= to fix here.
 
 # Local Variables:
 # eval: (setq-local toc-org-max-depth 4)
