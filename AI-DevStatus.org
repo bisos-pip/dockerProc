@@ -286,7 +286,10 @@ Driven by =bisos/raw/rebuild/rawBuildContainer.cs= (its AI-WorkPlan =<<container
   =-SecurityTypes None=. The image's =/usr/local/bin/vncStart.sh= (bro_dockerfiles, confined
   image, inherited) decides at each VNC start. Set/clear with =containerProc_instanceVncPassword=
   / =containerManage.sh vncPassword=, by =cp= (not =exec=). Classic VNC auth: 8 characters, no
-  encryption. Requires rebuilt images; untested on a daemon (Stage 8, 8.4).
+  encryption. Requires rebuilt images; untested on a daemon (Stage 8, 8.4). First real run
+  (VM, 2026-11-23): =vncpasswd= missing from the images (bro_dockerfiles adds =tigervnc-tools=,
+  2026-11-24). =set= now reports the engine's rc and stderr and names the rebuild, instead of
+  "vncpasswd produced no output" (=bxGenesis/base= AI-WorkPlan [[3.1.1]]).
 
 - *Lifecycle verbs and gate from =bisos.fileObj= (Stage 10, 2026-10-26)* --- the =fto_*= verbs,
   gate and status log are =bisos.fileObj='s (=ftoLeaf_csu= on this seed's =csuList=); this package

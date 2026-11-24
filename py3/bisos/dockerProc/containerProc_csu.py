@@ -737,7 +737,14 @@ class containerProc_instanceVncPassword(cs.Cmnd):
                 input=(pw1 + '\n').encode(), capture_output=True, check=False,
             )
             if gen.returncode != 0 or not gen.stdout:
-                return _reportProblems(cmndOutcome, what, ["vncpasswd produced no output; nothing changed."])
+                # Keep the engine's own error: it names the cause (e.g. no vncpasswd in the image).
+                engineErr = gen.stderr.decode(errors='replace').strip()
+                return _reportProblems(cmndOutcome, what, [
+                    f"vncpasswd failed in a throw-away container of {image} (rc={gen.returncode}"
+                    f"{': ' + engineErr if engineErr else ', no output'}); nothing changed.",
+                    f"An image without tigervnc-tools has no vncpasswd. Rebuild it "
+                    f"(./{_spcsName(p)} -i containerProc_imageBuild, its confined base first), "
+                    f"then instanceDelete + instanceUp."])
             content = gen.stdout
 
         # 'clear' copies in an empty file: vncStart.sh then runs VNC with no password.
