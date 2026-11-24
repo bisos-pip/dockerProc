@@ -126,7 +126,8 @@ unexpected path.
   secondary leaf) / remove the image.
 - =containerProc_instanceUp= --- checks (engine, compose file, image built, host ports free), then
   create + start; =instanceDown= / =instanceRestart= / =instanceDelete=.
-- =containerProc_instanceVncPassword= --- =set= / =clear= the optional VNC password (by =cp=).
+- =containerProc_instanceVncPassword= --- =set= / =clear= the optional VNC password, kept in the
+  leaf directory (=<leaf>/bisosVncPasswd=, 0600); no instance needed (2026-11-23).
 - =containerProc_instancePs= / =instanceLogs= / =instanceExec= --- inspection. =instancePs=
   filters =name=^<container>$= (anchored, so a secondary leaf =<primary>-<N>= is not listed).
 - =containerProc_exec_installRawBisos= --- run =installRawBisos.sh= in the container.
@@ -140,7 +141,9 @@ unexpected path.
 - =containerProc_build= ... =containerProc_clean= --- deprecated aliases (delegate).
 - =fto_*= (from =bisos.fileObj.ftoLeaf_csu=) --- lifecycle verbs and gate commands.
 
-Lifecycle actions: =fto_prepare= = =imageBuild=; =fto_materialize= = =instanceUp=;
+Lifecycle actions: =fto_prepare= = =imageBuild= (honours =--noCache=, read from the leaf's parsed
+command line, since 2026-11-23 --- also when a branch walk passes it on, a =bisos.fileObj= change of
+the same day); =fto_materialize= = =instanceUp=;
 =fto_reMaterialize= = re-create a stale instance, VNC password kept; =fto_unMaterialize= =
 =instanceDelete=; =fto_clean= = remove the image and copied =raw-bisos/= (refused while used);
 =fto_verify= / =fto_status= = =instanceVerify= / =instanceStatus=.
@@ -290,6 +293,24 @@ Driven by =bisos/raw/rebuild/rawBuildContainer.cs= (its AI-WorkPlan =<<container
   (VM, 2026-11-23): =vncpasswd= missing from the images (bro_dockerfiles adds =tigervnc-tools=,
   2026-11-24). =set= now reports the engine's rc and stderr and names the rebuild, instead of
   "vncpasswd produced no output" (=bxGenesis/base= AI-WorkPlan [[3.1.1]]).
+  *Superseded 2026-11-23 (user decision):* the password is no longer in the container but in the
+  leaf directory on the host --- next entry.
+
+- *VNC password kept in the leaf directory (2026-11-23, user decision)* --- =<leaf>/bisosVncPasswd=
+  (=vncpasswd -f= format, 0600, git-ignored in bro_dockerfiles), the single source. The leaf is
+  bind-mounted at =/shuttle/this=; =vncStart.sh= reads =/shuttle/this/bisosVncPasswd= at each VNC
+  start and copies it via sudo to =/run/bisosVncPasswd= (bystar's, 0600) for =-rfbauth=; no file
+  or an empty one = no password. =instanceVncPassword set= writes the file (atomic, 0600; image's
+  own =vncpasswd= in a throw-away container; refuses on an image whose =vncStart.sh= predates
+  this), =clear= removes it; no instance needed; a running instance is restarted. Survives
+  =instanceDelete=, re-create and rebuilds, so =fto_reMaterialize= no longer carries it
+  (=_vncPasswdRead= / =_vncPasswdWrite= / =_instanceStart= removed; it now deletes then
+  =instanceUp=). =instanceStatus= shows the configured mode (and warns on a mode other than 600).
+  VNC stays on all host interfaces (user: no forced tunnel). Why: on the first live run a
+  password set just before a re-create was lost, and new containers started password-less.
+  Checked here: refusal on a pre-change image, both ways; =vncStart.sh='s three cases in
+  throw-away containers. Untested: rebuilt images end to end --- bro_dockerfiles Stage 6
+  [[6.3]] / [[6.4]].
 
 - *Lifecycle verbs and gate from =bisos.fileObj= (Stage 10, 2026-10-26)* --- the =fto_*= verbs,
   gate and status log are =bisos.fileObj='s (=ftoLeaf_csu= on this seed's =csuList=); this package

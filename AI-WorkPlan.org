@@ -918,7 +918,15 @@ SCHEDULED: <2026-10-27 Tue>
 - No password: unchanged (TigerVNC viewer and noVNC connect without a prompt).
 - Set: viewer and noVNC both prompt; a wrong password is refused; survives restart.
 - Clear: back to no prompt.
+*Design changed 2026-11-23 (user):* the password is no longer in the container but in the leaf
+directory on the host (=<leaf>/bisosVncPasswd=), so it also survives =instanceDelete=, re-create
+and rebuilds, and =set= needs no instance (AI-DevStatus, "VNC password kept in the leaf
+directory"). The VM tests for it are bro_dockerfiles' AI-WorkPlan TODOs 6.3 (standalone) and 6.4
+(this package's =instanceVncPassword=); they replace the list above.
 ----- AI Results: ------
+2026-11-23, user's host, old design, after rebuilding with =tigervnc-tools=: =set= → the viewer
+prompted. A password set just before a re-create was lost (by design then); that led to the new
+design. The new design is not yet tested on rebuilt images.
 ** -
 
 

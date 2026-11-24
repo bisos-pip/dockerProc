@@ -627,15 +627,19 @@ Additional notes:
   running is left alone; a stopped one is started.
 - =instanceDown= and =instanceRestart= fail if the instance does not exist; =instanceDelete= then
   has nothing to do.
-- *VNC password, optional.* No password is the default (convenient for local development):
-  the instance has no, or an empty, =/home/bystar/.config/bisosVncPasswd=, and the image's
-  =/usr/local/bin/vncStart.sh= runs TigerVNC with =-SecurityTypes None=. =instanceVncPassword set=
-  asks for a password (twice), makes the file with the image's own =vncpasswd -f= in a throw-away
-  container, =cp=-s it in and restarts a running instance; VNC viewers and noVNC then ask for it.
-  =clear= copies in an empty file. Same file and steps as the standalone =containerManage.sh
-  vncPassword set|clear=. The password is lost on =instanceDelete=; only its first 8 characters
-  count; VNC traffic is not encrypted (use an SSH tunnel across a network). =set= refuses on an
-  image built before =vncStart.sh= existed (2026-10-26).
+- *VNC password, optional, kept in the leaf directory.* No password is the default (convenient
+  for local development): the leaf has no, or an empty, =<leaf>/bisosVncPasswd= on the host, and
+  the image's =/usr/local/bin/vncStart.sh= runs TigerVNC with =-SecurityTypes None=.
+  =instanceVncPassword set= asks for a password (twice), makes the file with the image's own
+  =vncpasswd -f= in a throw-away container, writes it to =<leaf>/bisosVncPasswd= (mode 0600,
+  git-ignored in bro_dockerfiles) and restarts a running instance; VNC viewers and noVNC then ask
+  for it. =clear= removes the file. No instance is needed. The leaf is bind-mounted at
+  =/shuttle/this=; =vncStart.sh= reads =/shuttle/this/bisosVncPasswd= at each VNC start (copied
+  through sudo to =/run/bisosVncPasswd= for =-rfbauth=). So the password survives =instanceDelete=,
+  re-create, =fto_reMaterialize= and image rebuilds; =instanceStatus= shows the configured mode.
+  Same file and steps as the standalone =containerManage.sh vncPassword set|clear=. Only its first
+  8 characters count; VNC traffic is not encrypted. =set= refuses on an image whose =vncStart.sh=
+  predates the leaf-directory password (2026-11-23), or that has no =vncpasswd=.
 - *Secondary instances.* A leaf named =<primary>-<N>= (e.g. =bisos_deb13-sysd-2=) runs
   =<primary>='s image: =paramsFromPlantPath()= gives it =imageName= = the primary's, and its own
   =containerName= and host ports, read from the leaf's =docker-compose.yml= (or Quadlet
@@ -664,6 +668,10 @@ container leaf (=ftoLeaf_seedInfo.setup(...)= in =containerProc_csu.py=):
 | =fto_verify=        | =instanceVerify=                                                  | not disabled    |
 | =fto_status=        | =instanceStatus=                                                  | not disabled    |
 
+- *=--noCache= with =fto_prepare=:* =./dockerProc.spcs -i fto_prepare --noCache=true= builds with
+  =--no-cache=; at a branch, =./ftoBranchProc.spcs -i fto_prepare --noCache=true= passes the option
+  on to every leaf (=bisos.fileObj=, 2026-11-23), as does =fto_forwardToLeaves
+  --cmndName=containerProc_imageBuild --noCache=true=. Use the =--name=value= form.
 - *Gate and status log in the leaf:* =dockerProc.control= / =dockerProc.status= (=podmanProc.*=
   in rootless-sysd leaves). =enabled= | =available= | =disabled=; missing = =available=;
   =disabled= leaves the leaf completely alone. Commands (from =bisos.fileObj=): =fto_control=,
@@ -672,8 +680,8 @@ container leaf (=ftoLeaf_seedInfo.setup(...)= in =containerProc_csu.py=):
 - *Staleness, read-only (this package):* =containerProc_imageIsStale= (image older than its base:
   rebuild due) and =containerProc_instanceIsStale= (instance on an older image than its tag:
   re-create due).
-- *Re-create loses the container's state*, except the VNC password, which =fto_reMaterialize=
-  keeps; a Raw-BISOS installation inside is lost.
+- *Re-create loses the container's state*; a Raw-BISOS installation inside is lost. The VNC
+  password is not in the container but in the leaf directory, so every re-create keeps it.
 - At a *branch*, the same =fto_*= names walk every leaf below and end with a summary read back
   from the leaves' status logs (a walk's exit codes are not reliable).
 

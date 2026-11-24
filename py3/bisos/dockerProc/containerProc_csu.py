@@ -414,9 +414,9 @@ def _instanceUp(
     """Check, then create (if needed) and --- unless start=False --- start the instance.
 
     The body of containerProc_instanceUp. start=False creates without starting
-    (docker compose up --no-start; podman create), for reMaterialize, which puts
-    the VNC password back before the first start. A new podman container is
-    always detached when start=False is followed by a separate start.
+    (docker compose up --no-start; podman create). It was used by reMaterialize while
+    the VNC password lived in the container; nothing uses it since the password moved
+    to the leaf directory (2026-11-23).
     """
     engine = p.engine.value
     leafDir = pathlib.Path(p.plantPath).parent
@@ -639,44 +639,52 @@ class containerProc_instanceRestart(cs.Cmnd):
 
 
 ###############################################################################
-# VNC password --- optional. No password is the default: no (or an empty)
-# password file in the container. /usr/local/bin/vncStart.sh in the image reads
-# it at each VNC start. Same file and steps as the leaves' standalone
+# VNC password --- optional. No password is the default. The password is kept on
+# the HOST, in the leaf directory: <leaf>/bisosVncPasswd ("vncpasswd -f" format,
+# mode 0600, git-ignored in bro_dockerfiles), so it survives instanceDelete,
+# re-create and image rebuilds. The leaf is bind-mounted at /shuttle/this, and
+# /usr/local/bin/vncStart.sh in the image reads /shuttle/this/bisosVncPasswd at
+# each VNC start. Same file and steps as the leaves' standalone
 # containerManage.sh vncPassword set|clear.
 ###############################################################################
 
-_VNC_PASSWD_PATH = '/home/bystar/.config/bisosVncPasswd'
+_VNC_PASSWD_NAME = 'bisosVncPasswd'
 
 
-def _vncAuthMode(engine: str, name: str) -> str:
-    """'password' if the container holds a non-empty VNC password file, else 'none'.
+def _vncPasswdFile(p: containerProc_seedInfo.ContainerParams) -> pathlib.Path:
+    """The leaf's VNC password file on the host."""
+    return pathlib.Path(p.plantPath).parent / _VNC_PASSWD_NAME
 
-    Read with 'cp <container>:<path> -' (a tar stream), which works on a stopped container.
+
+def _vncAuthMode(p: containerProc_seedInfo.ContainerParams) -> str:
+    """The configured VNC auth of this leaf: 'password (...)' if its file is non-empty, else 'none'.
+
+    A running instance applies it at its next (re)start.
     """
-    import io
-    import tarfile
-    r = subprocess.run([engine, 'cp', f'{name}:{_VNC_PASSWD_PATH}', '-'],
-                       capture_output=True, check=False)
-    if r.returncode != 0 or not r.stdout:
-        return 'none'
+    passwdFile = _vncPasswdFile(p)
     try:
-        with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tar:
-            member = tar.next()
-            return 'password' if member is not None and member.size > 0 else 'none'
-    except tarfile.TarError:
+        st = passwdFile.stat()
+    except OSError:
         return 'none'
+    if st.st_size == 0:
+        return 'none'
+    mode = st.st_mode & 0o777
+    if mode != 0o600:
+        return f"password (./{_VNC_PASSWD_NAME}; WARNING: mode {mode:o}, expected 600)"
+    return f"password (./{_VNC_PASSWD_NAME})"
 
 
 class containerProc_instanceVncPassword(cs.Cmnd):
-    """Set or clear the instance's VNC password. No password is the default.
+    """Set or clear this leaf's VNC password. No password is the default.
 
     Args: =set= or =clear=.
-      - set: asks for the password (twice, not echoed), makes the password file with
-        the image's own =vncpasswd -f= in a throw-away container, copies it in.
-      - clear: copies in an empty file --- back to no password.
-    A running instance is restarted so that VNC uses the new setting. The password is
-    lost on instanceDelete. Only its first 8 characters count, and VNC traffic is not
-    encrypted: across a network, use an SSH tunnel.
+      - set: asks for the password (twice, not echoed), makes the password file with the
+        image's own =vncpasswd -f= in a throw-away container, and keeps it in the leaf
+        directory on the host (=<leaf>/bisosVncPasswd=, mode 0600).
+      - clear: removes that file --- back to no password.
+    No instance is needed. A running instance is restarted so that VNC uses the new setting.
+    The password survives instanceDelete, re-create and image rebuilds. Only its first 8
+    characters count, and VNC traffic is not encrypted.
     """
     cmndParamsMandatory = []
     cmndParamsOptional = []
@@ -689,38 +697,44 @@ class containerProc_instanceVncPassword(cs.Cmnd):
         cmndOutcome: b.op.Outcome,
         argsList: typing.Optional[list[str]] = None,
     ) -> b.op.Outcome:
-        """set | clear the VNC password of this leaf's instance."""
+        """set | clear the VNC password of this leaf (kept in the leaf directory)."""
         callParamsDict = {}
         if self.invocationValidate(rtInv, cmndOutcome, callParamsDict, argsList).isProblematic():
             return b_io.eh.badOutcome(cmndOutcome)
 
         action = (argsList or [''])[0]
         p = _params()
-        what = f"changing the VNC password of {p.containerName}"
+        what = f"changing the VNC password of {p.leafName}"
         if action not in ('set', 'clear'):
             return _reportProblems(cmndOutcome, what, [f"argument must be set or clear, not {action!r}"])
         _refuseIfUnsupportedHost()
-        if (failed := _requireInstance(cmndOutcome, p, what)) is not None:
-            return failed
         engine = p.engine.value
         image = f"{p.imageName}:latest"
+        passwdFile = _vncPasswdFile(p)
+        build = (f"( cd ../{p.primaryLeaf} && ./{_spcsName(p)} -i containerProc_imageBuild )"
+                 if p.isSecondary else
+                 f"./{_spcsName(p)} -i containerProc_imageBuild (its confined base first)")
 
-        # An image built before VNC passwords existed would ignore the file.
-        hasVncStart = subprocess.run(
-            [engine, 'run', '--rm', '--network', 'none', '--entrypoint', 'test',
-             image, '-x', '/usr/local/bin/vncStart.sh'],
-            capture_output=True, check=False,
-        ).returncode == 0
-        if not hasVncStart:
-            return _reportProblems(cmndOutcome, what, [
-                f"image {image} has no /usr/local/bin/vncStart.sh, so it would ignore a VNC "
-                f"password. Rebuild it (./{_spcsName(p)} -i containerProc_imageBuild, its "
-                f"confined base first), then instanceDelete + instanceUp."])
-
-        import getpass
-        import tempfile
-        content = b''
         if action == 'set':
+            if not _imageExists(engine, image):
+                return _reportProblems(cmndOutcome, what, [
+                    f"image {image} is not built; its vncpasswd makes the password file. "
+                    f"Build it: {build}"])
+            # An image older than host-side passwords would ignore the file in the leaf.
+            honoursLeafFile = subprocess.run(
+                [engine, 'run', '--rm', '--network', 'none', '--entrypoint', 'grep',
+                 image, '-q', f'/shuttle/this/{_VNC_PASSWD_NAME}', '/usr/local/bin/vncStart.sh'],
+                capture_output=True, check=False,
+            ).returncode == 0
+            if not honoursLeafFile:
+                return _reportProblems(cmndOutcome, what, [
+                    f"image {image} predates VNC passwords kept in the leaf directory, so its "
+                    f"VNC would ignore ./{_VNC_PASSWD_NAME}. Rebuild it: {build}; then "
+                    f"instanceDelete + instanceUp."])
+
+            import getpass
+            import os
+            import tempfile
             pw1 = getpass.getpass("New VNC password: ")
             pw2 = getpass.getpass("Same password again: ")
             if not pw1:
@@ -742,22 +756,30 @@ class containerProc_instanceVncPassword(cs.Cmnd):
                 return _reportProblems(cmndOutcome, what, [
                     f"vncpasswd failed in a throw-away container of {image} (rc={gen.returncode}"
                     f"{': ' + engineErr if engineErr else ', no output'}); nothing changed.",
-                    f"An image without tigervnc-tools has no vncpasswd. Rebuild it "
-                    f"(./{_spcsName(p)} -i containerProc_imageBuild, its confined base first), "
-                    f"then instanceDelete + instanceUp."])
-            content = gen.stdout
+                    f"An image without tigervnc-tools has no vncpasswd. Rebuild it: {build}"])
+            # A 0600 temporary file next to the final one, renamed into place.
+            fd, tmpName = tempfile.mkstemp(prefix=f'.{_VNC_PASSWD_NAME}.', dir=passwdFile.parent)
+            try:
+                with os.fdopen(fd, 'wb') as tmp:
+                    tmp.write(gen.stdout)
+                os.chmod(tmpName, 0o600)
+                os.replace(tmpName, passwdFile)
+            except OSError as e:
+                pathlib.Path(tmpName).unlink(missing_ok=True)
+                return _reportProblems(cmndOutcome, what, [f"cannot write {passwdFile}: {e}"])
+            b_io.ann.note(f"VNC password kept in {passwdFile} (mode 0600).")
+        else:
+            passwdFile.unlink(missing_ok=True)
+            b_io.ann.note(f"Removed {passwdFile}: no VNC password.")
 
-        # 'clear' copies in an empty file: vncStart.sh then runs VNC with no password.
-        with tempfile.NamedTemporaryFile(prefix='bisosVncPasswd.') as tmp:
-            tmp.write(content)
-            tmp.flush()
-            _run([engine, 'cp', tmp.name, f'{p.containerName}:{_VNC_PASSWD_PATH}'])
-
-        if _containerState(engine, p.containerName) == 'running':
+        state = _containerState(engine, p.containerName)
+        if state == 'running':
             b_io.ann.note(f"Restarting {p.containerName} so that VNC uses the new setting.")
             _run([engine, 'restart', p.containerName])
-        else:
+        elif state is not None:
             b_io.ann.note("It takes effect when the instance starts.")
+        else:
+            b_io.ann.note("It takes effect when the instance is created (instanceUp).")
         mode = 'password' if action == 'set' else 'none'
         return cmndOutcome.set(opError=b.op.OpError.Success, opResults=f"VNC auth: {mode}")
 
@@ -1160,8 +1182,7 @@ class containerProc_instanceStatus(cs.Cmnd):
 
         _run([engine, 'inspect', p.containerName], check=False)
 
-        if _containerState(engine, p.containerName) is not None:
-            b_io.ann.note(f"VNC auth: {_vncAuthMode(engine, p.containerName)}")
+        b_io.ann.note(f"VNC auth: {_vncAuthMode(p)}  (applied at each instance start)")
 
         # SSH systemd summary if running
         inspect = subprocess.run(
@@ -1361,41 +1382,6 @@ class containerProc_instanceIsStale(_StalenessMixin, cs.Cmnd):
     _check = staticmethod(_instanceStaleness)
 
 
-# --- Helpers of the lifecycle actions ----------------------------------------
-
-def _vncPasswdRead(engine: str, name: str) -> bytes:
-    """The instance's VNC password file content (b'' if none), read with 'cp ... -' (a tar stream)."""
-    import io
-    import tarfile
-    r = subprocess.run([engine, 'cp', f'{name}:{_VNC_PASSWD_PATH}', '-'],
-                       capture_output=True, check=False)
-    if r.returncode != 0 or not r.stdout:
-        return b''
-    try:
-        with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tar:
-            member = tar.next()
-            handle = tar.extractfile(member) if member is not None else None
-            return handle.read() if handle is not None else b''
-    except tarfile.TarError:
-        return b''
-
-
-def _vncPasswdWrite(engine: str, name: str, content: bytes) -> None:
-    import tempfile
-    with tempfile.NamedTemporaryFile(prefix='bisosVncPasswd.') as tmp:
-        tmp.write(content)
-        tmp.flush()
-        _run([engine, 'cp', tmp.name, f'{name}:{_VNC_PASSWD_PATH}'])
-
-
-def _instanceStart(p: containerProc_seedInfo.ContainerParams) -> None:
-    if p.engine == containerProc_seedInfo.Engine.Docker:
-        composeFile = pathlib.Path(p.plantPath).parent / 'docker-compose.yml'
-        _run(['docker', 'compose', '-f', str(composeFile), 'start'])
-    else:
-        _run(['podman', 'start', p.containerName])
-
-
 # --- The lifecycle actions, registered with bisos.fileObj --------------------------
 # Each is (cmndOutcome) -> b.op.Outcome, called by fileObj's fto_<verb> after its gate
 # check; fileObj writes the status line.
@@ -1407,8 +1393,16 @@ def _lifecycleParams() -> containerProc_seedInfo.ContainerParams:
 
 
 def _lifecyclePrepare(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
-    """prepare = containerProc_imageBuild (nothing to build in a secondary leaf)."""
-    return containerProc_imageBuild().cmnd(rtInv=cs.RtInvoker.new_py(), cmndOutcome=cmndOutcome)
+    """prepare = containerProc_imageBuild (nothing to build in a secondary leaf).
+
+    Honors --noCache (e.g. 'fto_prepare --noCache=true', at this leaf or passed on by a branch
+    walk): fileObj's generic fto_prepare does not declare it, so it is read from this leaf's
+    parsed command line.
+    """
+    runArgs = cs.globalContext.get().icmRunArgsGet()
+    noCache = getattr(runArgs, 'noCache', None) if runArgs is not None else None
+    return containerProc_imageBuild().cmnd(rtInv=cs.RtInvoker.new_py(), cmndOutcome=cmndOutcome,
+                                           noCache=noCache)
 
 
 def _lifecycleMaterialize(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
@@ -1417,12 +1411,13 @@ def _lifecycleMaterialize(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
 
 
 def _lifecycleReMaterialize(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
-    """reMaterialize: re-create a stale instance from the current image, keeping its VNC password.
+    """reMaterialize: re-create a stale instance from the current image.
 
     No instance: create and start it. Current instance: nothing to do. Stale instance (it runs
-    an older image than the tag's): save the VNC password, delete, create without starting,
-    put the password back, start. Everything else inside the old container (e.g. a Raw-BISOS
-    installation) is lost --- /shuttle/share and /shuttle/this are outside it and survive.
+    an older image than the tag's): delete, then create and start. Everything inside the old
+    container (e.g. a Raw-BISOS installation) is lost --- /shuttle/share and /shuttle/this are
+    outside it and survive, and so does the VNC password, which is kept in the leaf directory
+    (/shuttle/this/bisosVncPasswd): the new instance's VNC applies it at its first start.
     """
     p = _lifecycleParams()
     engine = p.engine.value
@@ -1437,17 +1432,13 @@ def _lifecycleReMaterialize(cmndOutcome: b.op.Outcome) -> b.op.Outcome:
     if verdict == 'notBuilt':
         return _reportProblems(cmndOutcome, f"re-materializing {p.containerName}", [why])
     b_io.ann.note(f"{p.leafName}: {why}.")
-    vncPasswd = _vncPasswdRead(engine, p.containerName)
     outcome = _instanceDelete(cmndOutcome, p)
     if outcome.error != b.op.OpError.Success:
         return outcome
-    outcome = _instanceUp(cmndOutcome, p, start=False)
+    outcome = _instanceUp(cmndOutcome, p, detach=True)
     if outcome.error != b.op.OpError.Success:
         return outcome
-    if vncPasswd:
-        _vncPasswdWrite(engine, p.containerName, vncPasswd)
-        b_io.ann.note("VNC password kept across the re-create.")
-    _instanceStart(p)
+    b_io.ann.note(f"VNC auth: {_vncAuthMode(p)} (kept in the leaf directory).")
     return cmndOutcome.set(opError=b.op.OpError.Success,
                            opResults=f"re-created {p.containerName} from the current {p.imageName}")
 
