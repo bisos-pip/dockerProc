@@ -68,7 +68,7 @@ content it operates on.
 | =bisos.dockerProc= (*this package*) | pip package | *Container framework.* The planted =dockerProc.spcs= / =podmanProc.spcs=, path-derived parameters, and the =containerProc_*= verbs that build / run / verify one leaf.                                   |
 | [[https://github.com/bxObjects/bro_dockerfiles][=bro_dockerfiles=]]                   | BRO (repo)  | *Container image specifications.* The six-leaf matrix --- Dockerfiles, systemd units, per-leaf assets, and the =~/raw-bisos= payload baked into each image.                                              |
 | [[https://github.com/bisos-pip/fileObj][=bisos.fileObj=]]                     | pip package | *Generic tree walker.* FTO marker conventions plus =ftoBranchProc.spcs=, which applies one verb across every leaf beneath a branch. Domain-agnostic --- knows nothing about containers.                  |
-| [[https://github.com/bisos/raw][=/bisos/core/raw/rebuild=]]           | git repo    | *RawBisos-Reconstruction --- BISOS's CI/CD.* =rawBuildBox.cs= / =rawBuildKvm.cs= / =rawBuildContainer.cs=: one uniform entry point for rebuilding Raw-BISOS on metal, in a KVM guest, or in a container. |
+| [[https://github.com/bisos/raw][=/bisos/core/raw/rebuild=]]           | git repo    | *RawBisos-Reconstruction --- BISOS's CI/CD.* =rawBuildBox.cs= / =rawBuildGuest.cs= / =rawBuildContainer.cs=: one uniform entry point for rebuilding Raw-BISOS on metal, in a KVM guest, or in a container. |
 
 This package and =bro_dockerfiles= are *jointly designed* and evolve together
 --- framework and specifications, useless apart. The other two are at arm's
@@ -174,7 +174,7 @@ mask successful bootstraps on the others.
 
 *Containers are one of three reconstruction substrates.* Above both of
 the above, =/bisos/core/raw/rebuild= provides the platform-independent
-entry point --- =rawBuildContainer.cs=, =rawBuildKvm.cs=,
+entry point --- =rawBuildContainer.cs=, =rawBuildGuest.cs=,
 =rawBuildBox.cs= --- so the same reconstruction is expressed the same
 way whether the target is a container, a KVM guest, or raw metal. Its
 =procContainer= command drives one of this package's leaves through an
